@@ -1,0 +1,18 @@
+[gd_scene load_steps=4 format=3 uid="uid://dshuqyvl1jgky"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_fgjl5"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_l6igm"]
+size = Vector3(1, 2, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_fgjl5"]
+
+[node name="Wall" type="StaticBody3D"]
+physics_material_override = SubResource("PhysicsMaterial_fgjl5")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_l6igm")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0)
+mesh = SubResource("BoxMesh_fgjl5")

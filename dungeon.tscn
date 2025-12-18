@@ -1,0 +1,42 @@
+[gd_scene load_steps=9 format=3 uid="uid://rohlqlkphvtf"]
+
+[ext_resource type="Script" uid="uid://c1dmsk8idrh8" path="res://dungeon.gd" id="1_orq0m"]
+[ext_resource type="PackedScene" uid="uid://dshuqyvl1jgky" path="res://Wall.tscn" id="2_my81p"]
+[ext_resource type="PackedScene" uid="uid://d1iu4by8ous6h" path="res://Minimap.tscn" id="3_vol8w"]
+[ext_resource type="Script" uid="uid://b0gd8hrqpvtbb" path="res://player.gd" id="4_4f3i4"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_cfnsl"]
+
+[sub_resource type="Environment" id="Environment_cfnsl"]
+background_mode = 1
+background_color = Color(0.5999819, 0.81396663, 1, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.2706325, 0.6474652, 0.5819331, 1)
+reflected_light_source = 2
+
+[sub_resource type="CameraAttributesPractical" id="CameraAttributesPractical_7knc4"]
+
+[sub_resource type="Compositor" id="Compositor_wo506"]
+
+[node name="dungeon" type="Node3D"]
+script = ExtResource("1_orq0m")
+wall_scene = ExtResource("2_my81p")
+minimap_scene = ExtResource("3_vol8w")
+
+[node name="Player" type="CharacterBody3D" parent="."]
+script = ExtResource("4_4f3i4")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("CapsuleShape3D_cfnsl")
+
+[node name="Camera3D" type="Camera3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4300027, 0)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_cfnsl")
+camera_attributes = SubResource("CameraAttributesPractical_7knc4")
+compositor = SubResource("Compositor_wo506")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1148674, 0)

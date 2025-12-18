@@ -1,16 +1,34 @@
-# Godot 4+ specific ignores
+# --- Godot 4 editor/cache ---
 .godot/
-.nomedia
-
-# Godot-specific ignores
 .import/
+.export/
+
+# --- Export config (local secrets) ---
 export.cfg
 export_credentials.cfg
 
-# Imported translations (automatically generated from CSV files)
+# --- Temporary / autosave files ---
+*.tmp
+
+# --- Imported translations ---
 *.translation
 
-# Mono-specific ignores
+# --- Mono / C# ---
 .mono/
+.nuget/
 data_*/
 mono_crash.*.json
+
+# --- Android (generated only) ---
+android/build/
+android/.gradle/
+android/local.properties
+android/*.apk
+android/*.aab
+
+# --- OS / editor junk ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.nomedia

@@ -1,0 +1,26 @@
+[gd_scene load_steps=3 format=3 uid="uid://d1iu4by8ous6h"]
+
+[ext_resource type="Script" uid="uid://cn3ghm8txagwl" path="res://minimap.gd" id="1_ttd1e"]
+
+[sub_resource type="ImageTexture" id="ImageTexture_ttd1e"]
+
+[node name="Minimap" type="CanvasLayer"]
+
+[node name="Control" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("1_ttd1e")
+
+[node name="TextureRect" type="TextureRect" parent="Control"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = 902.0
+offset_right = 1112.0
+offset_bottom = 155.0
+grow_horizontal = 0
+size_flags_horizontal = 0
+texture = SubResource("ImageTexture_ttd1e")

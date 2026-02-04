@@ -8,12 +8,20 @@
 
 config_version=5
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
 config/name="SinkholeProject"
-run/main_scene="uid://rohlqlkphvtf"
-config/features=PackedStringArray("4.5", "Forward Plus")
+run/main_scene="uid://irhm53u32qp5"
+config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 config/icon="res://icon.svg"
+
+[dotnet]
+
+project/assembly_name="SinkholeProject"
 
 [input]
 

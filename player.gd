@@ -38,13 +38,13 @@ func _input(event):
 
 func _physics_process(delta: float) -> void:
 	# --- Gravity and Jump ---
-	
 	# Add the gravity.
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
 	
 	# Handle jump.
-	if Input.is_action_just_pressed("player_jump") and is_on_floor():
+	if Input.is_action_just_pressed("player_jump"):
+	#if Input.is_action_just_pressed("player_jump") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
 
 	# --- Movement ---

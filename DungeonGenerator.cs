@@ -12,9 +12,14 @@ public partial class DungeonGenerator : Node3D
 	[Export] public float NoiseFrequency = 0.05f;
 	[Export] public int SmoothingPasses = 5;
 	private int _currentDepth; // Store the random result here
-	private int[,,] _map;
 	private MeshInstance3D _meshInstance;
 	private FastNoiseLite _noise;
+	private int _chunkCount;
+	
+	private Dictionary<int, int[,,]> _worldChunks = new Dictionary<int, int[,,]>();
+
+	// We also need to keep track of the exits for EACH chunk to know where to start the next
+	private Dictionary<int, List<Vector3I>> _chunkExits = new Dictionary<int, List<Vector3I>>();
 	
 	private static readonly Vector3I[] cornerOffsets = new Vector3I[]
 {
@@ -30,235 +35,188 @@ public partial class DungeonGenerator : Node3D
 
 	public override void _Ready()
 	{
-		_meshInstance = new MeshInstance3D{Name = "CaveMesh"};
-		AddChild(_meshInstance);
-		
-		StandardMaterial3D mat = new StandardMaterial3D();
-		mat.VertexColorUseAsAlbedo = true; 
-		mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled; // See both sides
-		_meshInstance.MaterialOverride = mat;
-		
 		GenerateDungeon();
 	}
 
 	public void GenerateDungeon()
 	{
-		_currentDepth = (int)GD.RandRange(0, 50);
-		_map = new int[Width, _currentDepth, Height];
-
-		ApplyNoise();
-
-		for (int i = 0; i < SmoothingPasses; i++)
-			SmoothMap();
-		cullFloaters();
-		
-		PrintMap();
-		GenerateMesh();
-		PositionPlayer();
-		
+	_chunkCount = 0;
+	// Ensure depth is significant enough for a descent
+	_currentDepth = (int)GD.RandRange(40, 60); 
+	
+	// 2. Carve a guaranteed path from Top to Bottom
+	List<Vector3I> firstEntrance = new List<Vector3I> { new Vector3I(Width / 2, _currentDepth - 1, Height / 2) };
+	GenerateChunk(firstEntrance);
+	GenerateChunk(_chunkExits[1]);
+	GenerateChunk(_chunkExits[2]);
+	GenerateChunk(_chunkExits[3]);
+	GenerateChunk(_chunkExits[4]);
 	}
+	
+	
+	public void GenerateChunk(List<Vector3I> entrances){
+	// 1. Initialize the array (Object creation)
+	// Ensure Width, _currentDepth, and Height are already set
+	 int[,,] map = new int[Width, _currentDepth, Height];
+
+	// 2. Start with a solid block (1 = Rock)
+	InitializeSolid(map);
+	
+	// 3. Prepare Entrances 
+	// If the entrances came from the BOTTOM (Y=0) of the previous chunk,
+	// we must move them to the TOP (Y = _currentDepth - 1) of this new chunk.
+	List<Vector3I> adjustedEntrances = new List<Vector3I>();
+	foreach (var ent in entrances)
+	{
+		adjustedEntrances.Add(new Vector3I(ent.X, _currentDepth - 1, ent.Z));
+	}
+	
+	Random rnd = new Random();
+	int exitCount = rnd.Next(1, 6);
+	GD.Print($"New Chunk: {adjustedEntrances.Count} Entrances, {exitCount} Exits");
+	
+	List<Vector3I> exitPoints = new List<Vector3I>();
+
+	// 1. Determine the new Exit Points at the bottom (Y = 0)
+	for (int i = 0; i < exitCount; i++)
+	{
+		exitPoints.Add(new Vector3I(
+			rnd.Next(10, Width - 10),
+			0, 
+			rnd.Next(10, Height - 10)
+		));
+	}
+
+	// 4. Carve the paths to the new random exits
+	CarveVerticalPath(adjustedEntrances, exitPoints,  map);
+	
+	// 5. Build the visual representation
+	GenerateMesh(map);
+	_chunkCount++;
+	
+	//store map/store exits
+	_worldChunks.Add(_chunkCount, map);
+	
+	_chunkExits.Add(_chunkCount, exitPoints);
+	
+	if(_chunkCount == 1) PositionPlayer(map);
+	GD.Print("Chunk generation complete.");
+	
+}
+
+private void InitializeSolid(int[,,] map) {
+	for (int x = 0; x < Width; x++)
+	{
+		for (int y = 0; y < _currentDepth; y++)
+		{
+			for (int z = 0; z < Height; z++)
+			{
+				map[x, y, z] = 1; 
+			}
+		}
+	}
+	GD.Print("Solid block initialized successfully.");
+}
+
+	/* ===================== NEW: THE DRILLER ===================== */
+
+private void CarveVerticalPath(List<Vector3I> startPositions, List<Vector3I> exitPoints, int[,,] map)
+{
+	// 2. Map every entrance to every exit (or a random selection)
+	foreach (Vector3I startPos in startPositions)
+	{
+		foreach (Vector3I exitGoal in exitPoints)
+		{
+			// This ensures every entrance has a path to every exit
+			// creating a highly interconnected "Rat's Nest" style dungeon
+			CarvePathBetweenPoints(startPos, exitGoal, map);
+		}
+	}
+}
+
+private void CarvePathBetweenPoints(Vector3I start, Vector3I end, int[,,] map)
+{
+	Vector3 curr = new Vector3(start.X, start.Y, start.Z);
+	Random rnd = new Random();
+
+	// Progress is now moving TOWARD 0
+	while (curr.Y > end.Y)
+	{
+		// Subtract from Y to move down
+		float nextY = Math.Max(curr.Y - rnd.Next(4, 8), end.Y);
+		
+		float nextX = Mathf.Lerp(curr.X, end.X, 0.3f) + rnd.Next(-5, 6);
+		float nextZ = Mathf.Lerp(curr.Z, end.Z, 0.3f) + rnd.Next(-5, 6);
+		
+		Vector3 target = new Vector3(nextX, nextY, nextZ);
+
+		float dist = curr.DistanceTo(target);
+		int steps = (int)(dist * 2);
+		for (int i = 0; i <= steps; i++)
+		{
+			Vector3 lerpPos = curr.Lerp(target, (float)i / steps);
+			CarveSphere(lerpPos, rnd.Next(2, 4), map);
+		}
+
+		curr = target;
+	}
+}
+
+private void CarveSphere(Vector3 pos, int radius, int[,,] map)
+{
+	for (int x = -radius; x <= radius; x++)
+	{
+		for (int y = -1; y <= 2; y++) // Height for player
+		{
+			for (int z = -radius; z <= radius; z++)
+			{
+				if (x * x + z * z <= radius * radius)
+				{
+					int nx = (int)pos.X + x;
+					int ny = (int)pos.Y + y;
+					int nz = (int)pos.Z + z;
+
+					if (nx > 0 && nx < Width - 1 && ny >= 0 && ny < _currentDepth && nz > 0 && nz < Height - 1)
+					{
+						map[nx, ny, nz] = 0; // 0 is Air
+					}
+				}
+			}
+		}
+	}
+}
 
 	/* ===================== MAP GENERATION ===================== */
 
-	private void ApplyNoise()
-	{
-		_noise = new FastNoiseLite
-		{
-			Seed = (int)GD.Randi(),
-			NoiseType = FastNoiseLite.NoiseTypeEnum.Perlin,
-			Frequency = NoiseFrequency
-		};
-
-	// 3. Triple loop to fill the 3D volume
-		for (int x = 0; x < Width; x++)
-		{
-			for (int y = 0; y < _currentDepth; y++)
-			{
-				for (int z = 0; z < Height; z++)
-				{
-					// Boundary check: Seal the side walls AND the floor/ceiling
-					if (x == 0 || x == Width - 1 || 
-						z == 0 || z == Height - 1 || 
-						y == 0 || y == _currentDepth - 1)
-					{
-						_map[x, y, z] = 0; // Solid boundary
-					}
-					else
-					{
-						// Sample 3D noise for vertical connectivity
-						float normalizedY = (float)y / (_currentDepth - 1);
-						float noiseVal = _noise.GetNoise3D(x, y, z);
-						float bias = (normalizedY * 0.5f) - 0.25f; // Adjust these numbers to taste
-						float finalValue = noiseVal - bias;
-
-						_map[x, y, z] = finalValue > FillThreshold ? 1 : 0;
-					}
-				}
-			}
-		}
-	}
-
-
-	private int CountWallNeighbors(int x, int y, int z, int[,,] map)
-	{
-		int count = 0;
-		// Loop through a 3x3x3 area around the voxel
-		for (int i = -1; i <= 1; i++)
-		{
-			for (int j = -1; j <= 1; j++)
-			{
-				for (int k = -1; k <= 1; k++)
-				{
-					// Skip the center voxel itself
-					if (i == 0 && j == 0 && k == 0) continue;
-
-					// Check the 3D map
-					if (map[x + i, y + j, z + k] == 0) 
-						count++;
-				}
-			}
-		}
-		return count;
-	}
-	
-private List<Vector3I> GetRegionVoxels(int startX, int startY, int startZ, bool[,,] checkedVoxels, int targetValue)
+	private void ApplyErosionNoise(int[,,] map)
 {
-	List<Vector3I> voxels = new List<Vector3I>();
-	Queue<Vector3I> queue = new Queue<Vector3I>();
-	
-	queue.Enqueue(new Vector3I(startX, startY, startZ));
-	checkedVoxels[startX, startY, startZ] = true;
-
-	while (queue.Count > 0)
+	for (int x = 1; x < Width - 1; x++)
 	{
-		Vector3I curr = queue.Dequeue();
-		voxels.Add(curr);
-
-		// 26-Neighbor Check: Loop from -1 to 1 on all axes
-		for (int x = -1; x <= 1; x++)
+		for (int y = 1; y < _currentDepth - 1; y++)
 		{
-			for (int y = -1; y <= 1; y++)
+			for (int z = 1; z < Height - 1; z++)
 			{
-				for (int z = -1; z <= 1; z++)
+				// If it's already air (from the driller), we might expand it
+				// If it's rock, we might turn it to air if noise is high
+				float noiseVal = _noise.GetNoise3D(x, y, z);
+				
+				// We only turn rock into air if the noise is very strong.
+				// This creates pockets that connect to our main path.
+				if (map[x, y, z] == 0 && noiseVal > FillThreshold + 0.1f)
 				{
-					if (x == 0 && y == 0 && z == 0) continue; // Skip center
-
-					int nx = curr.X + x;
-					int ny = curr.Y + y;
-					int nz = curr.Z + z;
-
-					if (nx >= 0 && nx < Width && ny >= 0 && ny < _currentDepth && nz >= 0 && nz < Height)
-					{
-						if (!checkedVoxels[nx, ny, nz] && _map[nx, ny, nz] == targetValue)
-						{
-							checkedVoxels[nx, ny, nz] = true;
-							queue.Enqueue(new Vector3I(nx, ny, nz));
-						}
-					}
+					map[x, y, z] = 0; //air
 				}
 			}
 		}
 	}
-	return voxels;
 }
 
-private void SmoothMap()
-{
-	// 1. Standard Smoothing Pass (Run 2-3 times if needed)
-	for (int i = 0; i < 2; i++) 
-	{
-		int[,,] old = (int[,,])_map.Clone();
-		for (int x = 1; x < Width - 1; x++)
-		{
-			for (int y = 1; y < _currentDepth - 1; y++)
-			{
-				for (int z = 1; z < Height - 1; z++)
-				{
-					int walls = CountWallNeighbors(x, y, z, old);
-					if (walls > 14) _map[x, y, z] = 0;
-					else if (walls < 12) _map[x, y, z] = 1;
-				}
-			}
-		}
-	}
-
-	// 2. Flood Fill to find Floaters
-}
-	private void cullFloaters() {
-		bool[,,] checkedAir = new bool[Width, _currentDepth, Height];
-	List<List<Vector3I>> airRegions = new List<List<Vector3I>>();
-
-	for (int x = 0; x < Width; x++) {
-		for (int y = 0; y < _currentDepth; y++) {
-			for (int z = 0; z < Height; z++) {
-				if (!checkedAir[x, y, z] && _map[x, y, z] == 1) {
-					airRegions.Add(GetRegionVoxels(x, y, z, checkedAir, 1));
-				}
-			}
-		}
-	}
-	GD.Print($"Flood Fill found {airRegions.Count} distinct air regions.");
-	for (int i = 0; i < Math.Min(airRegions.Count, 10); i++)
-	{
-		GD.Print($"Region {i}: {airRegions[i].Count} voxels");
-	}
-	// 3. Keep only the largest air region, fill others with stone
-	if (airRegions.Count > 1)
-	{
-		// Sort by size descending
-		airRegions.Sort((a, b) => b.Count.CompareTo(a.Count));
-
-		// Start from index 1 (the smaller regions) and turn them back to solid (0)
-		for (int i = 1; i < airRegions.Count; i++)
-		{
-			foreach (Vector3I floaterVoxel in airRegions[i])
-			{
-				_map[floaterVoxel.X, floaterVoxel.Y, floaterVoxel.Z] = 0;
-			}
-		}
-	}
-	
-	// PASS 2: ROCK CULL (Remove floating islands)
-	bool[,,] checkedRock = new bool[Width, _currentDepth, Height];
-	List<List<Vector3I>> rockRegions = new List<List<Vector3I>>();
-
-	for (int x = 0; x < Width; x++) {
-		for (int y = 0; y < _currentDepth; y++) {
-			for (int z = 0; z < Height; z++) {
-				if (!checkedRock[x, y, z] && _map[x, y, z] == 0) {
-					rockRegions.Add(GetRegionVoxels(x, y, z, checkedRock, 0));
-				}
-			}
-		}
-	}
-
-	foreach (var region in rockRegions) {
-		if (!IsRegionGrounded(region)) {
-			foreach (var pos in region) {
-				_map[pos.X, pos.Y, pos.Z] = 1; // Delete floating rocks
-			}
-		}
-	}
-}
-	
-private bool IsRegionGrounded(List<Vector3I> region)
-{
-	foreach (Vector3I v in region)
-	{
-		// If any voxel in this rock cluster touches the outer shell, it's grounded
-		if (v.X == 0 || v.X == Width - 1 || 
-			v.Y == 0 || v.Y == _currentDepth - 1 || 
-			v.Z == 0 || v.Z == Height - 1)
-		{
-			return true;
-		}
-	}
-	return false;
-}
 	/* ===================== MESH GENERATION ===================== */
 
-	private void GenerateMesh()
+	private void GenerateMesh(int[,,] map)
 	{
+		MeshInstance3D newChunkMesh = new MeshInstance3D();
+		AddChild(newChunkMesh);
 		SurfaceTool st = new SurfaceTool();
 		st.Begin(Mesh.PrimitiveType.Triangles);
 
@@ -269,29 +227,46 @@ private bool IsRegionGrounded(List<Vector3I> region)
 				for (int z = 0; z < Height - 1; z++)
 				{
 					// MarchCube logic goes here
-					MarchCube(st, x, y, z);
+					MarchCube(st, x, y, z, map);
 				}
 			}
 		}
 		st.GenerateNormals(); // This calculates the lighting for smooth shading
 		st.Index();           // This merges duplicate vertices to save memory
 		ArrayMesh mesh = st.Commit();
-		_meshInstance.Mesh = mesh;
+		StandardMaterial3D prototypeMaterial = new StandardMaterial3D();
+
+		// 1. Set the color
+		prototypeMaterial.AlbedoColor = new Color(0.4f, 0.4f, 0.45f);
+
+		// 2. Enable Triplanar mapping (Note the casing: Uv1Triplanar)
+		prototypeMaterial.Uv1Triplanar = true; 
+
+		// 3. Set the Triplanar sharpness (makes the blend between sides look better)
+		prototypeMaterial.Uv1TriplanarSharpness = 0.5f;
+
+		// 4. Apply to your mesh
+		newChunkMesh.Mesh = mesh;
+		newChunkMesh.MaterialOverride = prototypeMaterial; // Use your material
+		float verticalOffset = (_chunkCount) * (_currentDepth - 1);
+		newChunkMesh.GlobalPosition = new Vector3(0, -verticalOffset, 0);
 		
-		foreach (var child in _meshInstance.GetChildren()) {
+		foreach (var child in newChunkMesh.GetChildren()) {
 		child.Free(); // Use Free() immediately for safety here
-	}
-		_meshInstance.CreateTrimeshCollision();
+		}
+		newChunkMesh.CreateTrimeshCollision();
+		GD.Print($"Chunk {_chunkCount} generated at Global Y: {newChunkMesh.GlobalPosition.Y}");
+		
 	}
 	
-private void MarchCube(SurfaceTool st, int x, int y, int z)
+private void MarchCube(SurfaceTool st, int x, int y, int z, int[,,] map)
 {
 	// 1. Get noise values for the 8 corners
 	float[] cubeValues = new float[8];
 	for (int i = 0; i < 8; i++) {
 		cubeValues[i] = SampleFloat(x + cornerOffsets[i].X, 
 									y + cornerOffsets[i].Y, 
-									z + cornerOffsets[i].Z);
+									z + cornerOffsets[i].Z, map);
 	}
 
 	// 2. Build the 8-bit index (0-255)
@@ -323,7 +298,7 @@ private void MarchCube(SurfaceTool st, int x, int y, int z)
 	}
 }
 
-	private float SampleFloat(int x, int y, int z)
+	private float SampleFloat(int x, int y, int z, int[,,] map)
 	{
 		// Bounds Check: If we are outside the map, treat it as empty air (0)
 		// This prevents "IndexOutOfRangeException"
@@ -334,9 +309,9 @@ private void MarchCube(SurfaceTool st, int x, int y, int z)
 		return -1.0f; 
 	}
 
-	//  Get your raw noise (-1.0 to 1.0 range usually)
-	float noiseValue = _noise.GetNoise3D(x, y, z);
-	return noiseValue;
+	// Assuming 1 = Rock (Solid) and 0 = Air (Empty) based on your previous logic
+	// Marching Cubes usually considers values ABOVE a threshold as "Solid"
+	return (map[x, y, z] == 1) ? 1.0f : -1.0f;
 	}
 	
 	
@@ -370,58 +345,45 @@ private Vector3 InterpEdge(int edgeIndex, int x, int y, int z, float[] cubeValue
 }
 	
 	
-	private void PositionPlayer()
-{
+	private void PositionPlayer(int[,,] map)
+	{
 	// 1. Find the player (Search the whole scene tree if not exported)
-	var player = GetTree().Root.FindChild("Player", true, false) as Node3D;
+			var player = GetTree().Root.FindChild("Player", true, false) as Node3D;
 
-	if (player == null)
-	{
-		GD.PrintErr("DungeonGenerator: Could not find Player node in the scene!");
-		return;
-	}
-
-	// 2. Search for a valid spawn point [x, y, z]
-	// We start searching from the top layers down to find the "surface" or highest floor
-	for (int y = _currentDepth - 2; y >= 1; y--) 
-	{
-		for (int x = 5; x < Width - 5; x++)
-		{
-			for (int z = 5; z < Height - 5; z++)
+			if (player == null)
 			{
-				// Check if current voxel is floor (1) AND the one above is empty (0)
-				if (_map[x, y, z] == 1 && _map[x, y + 1, z] == 0)
+				GD.PrintErr("DungeonGenerator: Could not find Player node in the scene!");
+				return;
+			}
+
+			// 2. Search for a valid spawn point [x, y, z]
+			// We start searching from the top layers down to find the "surface" or highest floor
+			// Change your loop to start from the top of the map
+			// Loop ends at Depth - 2 so that y + 1 is always safe (max Depth - 1)
+		for (int y = _currentDepth - 1; y >= 0; y--) 
+		{
+			for (int x = 5; x < Width - 5; x++)
+			{
+				for (int z = 5; z < Height - 5; z++)
 				{
-					// Calculate Global Position
-					// x and z are horizontal, y is vertical
-					Vector3 spawnPos = GlobalTransform.Origin + new Vector3(x + 0.5f, y + 1.5f, z + 0.5f);
 					
-					player.GlobalPosition = spawnPos;
-					
-					GD.Print($"Player positioned at 3D coordinate: X:{x}, Y:{y}, Z:{z}");
-					return;
+					if ((map[x, y, z] == 0 && map[x, y - 1, z] == 1) || (y == (_currentDepth-1) && map[x, y, z] == 1))
+					{
+						// We place the player at Y because Y is the AIR voxel.
+						// We add a small 1.1f offset to keep their feet from clipping into the floor.
+						Vector3 spawnPos = GlobalTransform.Origin + new Vector3(x + 0.5f, y + 1.1f, z + 0.5f);
+						
+						player.GlobalPosition = spawnPos;
+						GD.Print($"Player spawned at: X:{x}, Y:{y}, Z:{z}");
+						return;
+					}
 				}
 			}
 		}
+	
+		GD.PrintErr("DungeonGenerator: Could not find a valid spawn point!");
 	}
 	
-	GD.PrintErr("DungeonGenerator: Could not find a valid spawn point!");
-}
-	
-private void PrintMap()
-{
-	int y = 21;
-	GD.Print($"===== VIEWING FLOOR AT HEIGHT Y: {y} =====");
-	for (int z = 0; z < Height; z++) // Use Z as the depth of the row
-	{
-		string row = "";
-		for (int x = 0; x < Width; x++)
-		{
-			// 0 is usually WALL, 1 is usually FLOOR (Empty space)
-			row += _map[x, y, z] == 0 ? "██" : "  "; 
-		}
-		GD.Print(row);
-	}
-}
+
 
 }

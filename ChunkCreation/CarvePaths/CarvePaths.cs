@@ -8,12 +8,19 @@ public partial class CarvePaths : Node
 {
 	public enum BiomeType { Cave, Tunnel, Cavern }
 
-	private struct Room
+	private class Room
 	{
 		public Vector3I Center;
-		public int Width;
-		public int Height;
-		public int Depth;
+		public int Width, Height, Depth;
+		// Stores references to connected rooms
+		public List<Room> Neighbors = new List<Room>(); 
+	}
+	
+	// Helper method to keep things bidirectional
+	private void Connect(Room a, Room b)
+	{
+		if (!a.Neighbors.Contains(b)) a.Neighbors.Add(b);
+		if (!b.Neighbors.Contains(a)) b.Neighbors.Add(a);
 	}
 
 	public void CarveSeededVerticalPath(int chunkIndex, WorldContext context)
@@ -29,32 +36,73 @@ public partial class CarvePaths : Node
 		List<Vector3I> entrances = GetEntrancesForChunk(chunkIndex, width, depth, height, context);
 		List<Vector3I> exits     = GetExitsForChunk(chunkIndex, width, depth, context);
 
-		// Generate rooms spread across the chunk height
+			// 1. GENERATE ROOMS
 		List<Room> rooms = GenerateRooms(rnd, width, height, depth, biome);
+		
+		// 2. SORT ROOMS INTO DIRECTED ACYCLIC GRAPH
+		// This is the "Spine" order.
+		//topological sort?
+		rooms.Sort((a, b) => b.Center.Y.CompareTo(a.Center.Y));
+		for (int i = 0; i < rooms.Count; i++)
+		{
+			// A. The Primary Path (Guarantees the descent is possible)
+			if (i < rooms.Count - 1)
+			{
+			  Connect(rooms[i], rooms[i + 1]);
+			}
+			// B. The "Acyclic" Branch (Connects to a room further down, skipping one)
+			// This creates the "Diamond" shapes in a DAG while staying bidirectional
+			if (i < rooms.Count - 2 && rnd.NextDouble() < 0.4)
+			{
+				Connect(rooms[i], rooms[i + 2]);
+			}
+		}
 
-		// Carve all rooms
+		// 3. CARVE THE ROOMS
 		foreach (var room in rooms)
 			CarveRoom(room, map, width, height, depth, biome, context);
 
-		// Connect adjacent rooms with hallways
-		for (int i = 0; i < rooms.Count - 1; i++)
-			CarveHallway(rooms[i].Center, rooms[i + 1].Center, map, width, height, depth, biome, context);
-
-		// For each entrance, connect to nearest room then shaft down to exit
+		// 4. CONNECT ENTRANCES -> FIRST ROOM
+		// No matter where the entrance is, it MUST hit the start of the spine.
 		foreach (var entrance in entrances)
 		{
-			Room nearestToEntrance = FindNearestRoom(entrance, rooms);
-			CarveVerticalShaft(new Vector3I(entrance.X, entrance.Y, entrance.Z),
-				nearestToEntrance.Center, map, width, height, depth, biome, context);
+			CarveVerticalShaft(entrance, rooms[0].Center, map, width, height, depth, biome, context);
 		}
+		// 5. CONNECT ROOMS VIA THE DAG (The "Web" Spine)
+		for (int i = 0; i < rooms.Count; i++)
+		{
+			foreach (var neighbor in rooms[i].Neighbors)
+			{
+				// Get the index of the neighbor in our sorted list
+				int neighborIndex = rooms.IndexOf(neighbor);
 
+				// ONLY CARVE FORWARD (Down the DAG)
+				// This prevents Room 0 carving to Room 1, then Room 1 carving back to Room 0.
+				if (neighborIndex > i)
+				{
+					// Choose the carving method based on vertical distance
+					if (Math.Abs(rooms[i].Center.Y - neighbor.Center.Y) > 5) {
+						// If there's a big height gap, use a shaft/stairs
+						CarveVerticalShaft(rooms[i].Center, neighbor.Center, map, width, height, depth, biome, context);
+					} else {
+						// If they are relatively level, use a hallway
+						CarveHallway(rooms[i].Center, neighbor.Center, map, width, height, depth, biome, context);
+					}
+				}
+			}
+		}
+		// 6. LAST ROOM -> EXITS
 		foreach (var exit in exits)
 		{
-			Room nearestToExit = FindNearestRoom(exit, rooms);
-			CarveVerticalShaft(nearestToExit.Center,
-				new Vector3I(exit.X, exit.Y, exit.Z), map, width, height, depth, biome, context);
+			// Usually, rooms[rooms.Count - 1] is your lowest room due to the sort
+			CarveVerticalShaft(rooms[rooms.Count - 1].Center, exit, map, width, height, depth, biome, context);
 		}
 	}
+
+		
+		
+		
+		
 
 	// --- Room Generation ---
 

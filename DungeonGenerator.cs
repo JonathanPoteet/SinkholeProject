@@ -28,23 +28,23 @@ public partial class DungeonGenerator : Node3D
 	public void GenerateDungeon()
 	{
 		InitializeChunk chunkInitializer = new InitializeChunk();
-		for (int i = 0; i < 5; i++)
+		for (int i = 0; i < 3; i++)
 				{
 					chunkInitializer.GenerateChunk(i, _context);
 				}
 				
 		CarvePaths carver = new CarvePaths();
-		for(int i = 0; i < 5; i++) {
+		for(int i = 0; i < 3; i++) {
 			carver.CarveSeededVerticalPath(i, _context);
 		}
 		StitchChunk chunkStitcher = new StitchChunk();
-	  	for (int i = 0; i < 5; i++) {
+	  	for (int i = 0; i < 3; i++) {
 			chunkStitcher.StitchChunkBorders(i, _context.WorldChunks);
 		}
 		
 		GenerateMesh meshGen = new GenerateMesh();
 		AddChild(meshGen);
-		for (int i = 0; i < 5; i++)
+		for (int i = 0; i < 3; i++)
 				{
 					meshGen.MeshGenerator(i, _context);
 				}

@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://irhm53u32qp5"]
 
-[ext_resource type="Script" uid="uid://r481m5dsc0m2" path="res://DungeonGenerator.cs" id="1_qu0b2"]
-[ext_resource type="Script" uid="uid://b0gd8hrqpvtbb" path="res://Player/player.gd" id="4_4f3i4"]
+[ext_resource type="Script" uid="uid://dcis7bt8uqv41" path="res://DungeonGenerator.cs" id="1_qu0b2"]
+[ext_resource type="Script" uid="uid://b0gd8hrqpvtbb" path="res://player.gd" id="4_4f3i4"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_cfnsl"]
 

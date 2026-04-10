@@ -15,7 +15,7 @@ public partial class StitchChunk : Node
 	// Use the smaller of the two dimensions to stay in bounds
 	int safeWidth = Math.Min(current.width, below.width);
 	int safeDepth = Math.Min(current.depth, below.depth);
-
+	GD.Print("Stitching...");
 	for (int x = 1; x < safeWidth - 1; x++)
 	{
 		for (int z = 1; z < safeDepth - 1; z++)

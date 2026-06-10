@@ -10,10 +10,11 @@ public partial class InitializeChunk : Node
 {
 	Chunk newChunk = new Chunk();
 
-	Random rnd = new Random(context.Seed + chunkIndex + 1000);
+	Random rnd = new Random(context.Seed + chunkIndex);
 	newChunk.width  = 100;
 	newChunk.height = rnd.Next(45, 65);
 	newChunk.depth  = 100;
+	
 
 	int pastOffset = 0;
 	int pastHeight = 0;
@@ -21,12 +22,14 @@ public partial class InitializeChunk : Node
 	{
 		pastOffset = context.WorldChunks[chunkIndex - 1].GlobalYOffset;
 		pastHeight = context.WorldChunks[chunkIndex - 1].height;
+	} else {
+		newChunk.height = newChunk.height + 20; //adding 20 to give more room since the terrain takes up space
 	}
 
 	newChunk.GlobalYOffset = (chunkIndex == 0) ? newChunk.height : pastOffset - pastHeight;
 	newChunk.Biome = GetBiomeForChunk(chunkIndex, context);
 
-	GD.Print($"Generating Chunk {chunkIndex}, Global Y Offset: {newChunk.GlobalYOffset}, Biome: {newChunk.Biome}");
+	GD.Print($"Generating Chunk {chunkIndex}, Global Y Offset: {newChunk.GlobalYOffset}, Biome: {newChunk.Biome}, Chunk Height: {newChunk.height}");
 
 	int[,,] map = new int[newChunk.width, newChunk.height, newChunk.depth];
 	InitializeSolid(map, newChunk.width, newChunk.height, newChunk.depth, chunkIndex, newChunk.GlobalYOffset, context.Noise);
@@ -37,7 +40,7 @@ public partial class InitializeChunk : Node
 
 private BiomeType GetBiomeForChunk(int chunkIndex, WorldContext context)
 {
-	var rnd = new Random(context.Seed + chunkIndex * 777);
+	var rnd = new Random(context.Seed + chunkIndex);
 	return (BiomeType)rnd.Next(0, 3);
 }
 	

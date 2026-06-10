@@ -15,10 +15,7 @@ public class Chunk
 	public List<Room> Rooms              = new();
 	public List<(int From, int To)> Edges = new();
 	public List<int> GuaranteedPath      = new();
-	public Vector3I EntryPoint;
-	public Vector3I ExitPoint;
-	public int EntryRoomIndex;
-	public int ExitRoomIndex;
+	public List<Vector3I> ExitPoints = new List<Vector3I>();
 }
 
 public enum BiomeType { Cave, Tunnel, Cavern }

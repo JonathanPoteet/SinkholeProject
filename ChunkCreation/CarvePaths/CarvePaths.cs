@@ -4,6 +4,7 @@ using System.Collections.Generic;
 namespace SinkholeProject.ChunkCreation.CarvePaths;
 using SinkholeProject.World;
 using System.Diagnostics;
+using System.Linq;
 
 public partial class CarvePaths : Node
 {
@@ -50,30 +51,59 @@ public partial class CarvePaths : Node
 		}
 	}
 	
-	// Iterate through each entry point identified for this chunk
-	foreach (Vector3I point in entryPoints)
-	{
-		GD.Print($"Processing entry point at: X={point.X}, Y={point.Y}, Z={point.Z}");
-	}
-	
-
 	// 2. GENERATE ROOMS
-	List<Room> rooms = GenerateRooms(rnd, width, height, depth, biome, chunkIndex);
-	rooms.Sort((a, b) => b.Center.Y.CompareTo(a.Center.Y));
+	List<Room> majorRooms = GenerateRooms(rnd, width, height, depth, biome, chunkIndex, 5);
+	List<Room> minorRooms = GenerateRooms(rnd, width, height, depth, biome, chunkIndex, 10);
+	majorRooms.Sort((a, b) => b.Center.Y.CompareTo(a.Center.Y));
 	
-		// C. Connect Room Spine (DAG)
-	for (int i = 0; i < rooms.Count; i++) {
-		// Build the DAG relationships
-		if (i < rooms.Count - 1) Connect(rooms[i], rooms[i + 1]);
-		if (i < rooms.Count - 2 && rnd.NextDouble() < 0.4) Connect(rooms[i], rooms[i + 2]);
+	for (int i = 0; i < majorRooms.Count - 1; i++)
+{
+	// A 30% chance to swap with the next room
+	// This allows the path to momentarily go "up" before moving "down"
+	if (rnd.NextDouble() < 0.3)
+	{
+		var temp = majorRooms[i];
+		majorRooms[i] = majorRooms[i + 1];
+		majorRooms[i + 1] = temp;
+		
+		// Skip the next index to prevent double-swapping 
+		// and keeping the "flow" relatively intact
+		i++; 
+	}
+}
+	
+	
+	// 1. Connect the Major Spine (The Golden Path)
+for (int i = 0; i < majorRooms.Count - 1; i++)
+{
+	Connect(majorRooms[i], majorRooms[i + 1]);
+}
 
-		// Carve connections
-		foreach (var neighbor in rooms[i].Neighbors) {
-			if (rooms.IndexOf(neighbor) > i) {
-				CarveVerticalShaft(rooms[i].Center, neighbor.Center, map, width, height, depth, biome, context);
-			}
+// 2. Attach Minor Rooms to the closest Major Room
+// This creates natural "pockets" of exploration off the main path
+foreach (var minor in minorRooms)
+{
+	// Find the closest major room
+	var closestMajor = majorRooms.OrderBy(m => m.Center.DistanceTo(minor.Center)).First();
+	
+	Connect(minor, closestMajor);
+	
+	// Now carve the connection
+	CarveRaggedShaft(minor.Center, closestMajor.Center, map, width, height, depth, context);
+}
+
+// 3. Carve the Major Spine
+foreach (var room in majorRooms)
+{
+	foreach (var neighbor in room.Neighbors)
+	{
+		// Ensure we only carve once per connection
+		if (majorRooms.IndexOf(neighbor) > majorRooms.IndexOf(room))
+		{
+			CarveRaggedShaft(room.Center, neighbor.Center, map, width, height, depth, context);
 		}
 	}
+}
 
 	// 3. GENERATE EXIT POINTS (For the next chunk)
 	int exitCount = rnd.Next(1, 4);
@@ -83,25 +113,22 @@ public partial class CarvePaths : Node
 		));
 	}
 	
-	foreach (Vector3I point in currentChunk.ExitPoints)
-	{
-		GD.Print($" point at: X={point.X}, Y={point.Y}, Z={point.Z}");
-	}
-
 	// 4. CARVE ROOMS
-	foreach (var room in rooms) {
+	foreach (var room in majorRooms) {
 		CarveRoom(room, map, width, height, depth, biome, context);
 	}
-
+	foreach (var room in minorRooms) {
+		CarveRoom(room, map, width, height, depth, biome, context);
+	}
 	// 5. CONNECT EVERYTHING
 	// A. Connect Entry -> First Room
 	foreach (var entry in entryPoints) {
-		CarveVerticalShaft(entry, rooms[0].Center, map, width, height, depth, biome, context);
+		CarveVerticalShaft(entry, majorRooms[0].Center, map, width, height, depth, biome, context);
 	}
 
 	// B. Connect Last Room -> Exits //should be carve closest room to exits
 	foreach (var exit in currentChunk.ExitPoints) {
-		CarveVerticalShaft(rooms[^1].Center, exit, map, width, height, depth, biome, context);
+		CarveVerticalShaft(majorRooms[^1].Center, exit, map, width, height, depth, biome, context);
 	}
 	
 }
@@ -113,10 +140,11 @@ public partial class CarvePaths : Node
 
 	// --- Room Generation ---
 
-	private List<Room> GenerateRooms(System.Random rnd, int width, int height, int depth, BiomeType biome, int chunkIndex)
+	private List<Room> GenerateRooms(System.Random rnd, int width, int height, int depth, BiomeType biome, int chunkIndex, int roomCount)
 	{
 		var rooms = new List<Room>();
-		int roomCount = rnd.Next(3, 7);
+		//int roomCount = 5; // TODO: go to a bigger size once pathing is figured out
+		//int roomCount = rnd.Next(10, 30);
 		int sectionHeight = height / roomCount;
 		// Spread rooms evenly across the chunk height
 			int yOffset = 0;
@@ -286,30 +314,29 @@ public partial class CarvePaths : Node
 	}
 
 private void CarveRaggedShaft(Vector3I start, Vector3I end, int[,,] map, 
-	int width, int height, int depth, WorldContext context)
-{
-	// 1. Calculate distance in 3D
-	float dist = ((Vector3)start).DistanceTo((Vector3)end);
-	int steps = (int)(dist * 2); // 2 steps per unit ensures no holes
-
-	for (int i = 0; i <= steps; i++)
+	int width, int height, int depth, WorldContext context) {
+	// Inside CarveRaggedShaft...
+	// Check if the area is already empty before carving
+	Vector3 current = new Vector3(start.X, start.Y, start.Z);
+	Vector3 target = new Vector3(end.X, end.Y, end.Z);
+	// In Godot, use .DistanceTo()
+	while (current.DistanceTo(target) > 1.0f)
 	{
-		float t = (float)i / steps;
+		// Calculate direction towards the target
+		Vector3 direction = (target - current).Normalized();
 		
-		// 2. Interpolate all 3 axes
-		float x = Mathf.Lerp(start.X, end.X, t);
-		float y = Mathf.Lerp(start.Y, end.Y, t);
-		float z = Mathf.Lerp(start.Z, end.Z, t);
+		// Add noise for an organic "wobble"
+		float nX = context.Noise.GetNoise3D(current.X * 0.1f, current.Y * 0.1f, current.Z * 0.1f);
+		float nY = context.Noise.GetNoise3D(current.X * 0.1f + 50f, current.Y * 0.1f, current.Z * 0.1f);
+		float nZ = context.Noise.GetNoise3D(current.X * 0.1f + 100f, current.Y * 0.1f, current.Z * 0.1f);
 		
-		// 3. Add noise to the path for a natural "cave" feel
-		// Keep the noise magnitude smaller than your radius to prevent gaps
-		float noiseX = context.Noise.GetNoise3D(x * 0.2f, y * 0.2f, z * 0.2f) * 2f;
-		float noiseZ = context.Noise.GetNoise3D(x * 0.2f, y * 0.2f, z * 0.2f + 100f) * 2f;
+		Vector3 wander = new Vector3(nX, nY, nZ) * 0.8f;
 		
-		int radius = 3; // Keep radius consistent
+		// Move and apply noise steering
+		current += (direction + wander) * 0.5f;
 		
-		// 4. Carve
-		CarveRadius((int)(x + noiseX), (int)y, (int)(z + noiseZ), radius, map, width, height, depth);
+		// Carve using current position
+		CarveRadius((int)current.X, (int)current.Y, (int)current.Z, 3, map, width, height, depth);
 	}
 }
 
@@ -348,18 +375,6 @@ private void CarveRaggedShaft(Vector3I start, Vector3I end, int[,,] map,
 	}
 
 	
-	private Vector3I GetConnectionPoint(int chunkIndex, int width, int depth, WorldContext context)
-	{
-		// Use the index of the chunk ABOVE as the seed. 
-		// This ensures both Chunk N and Chunk N+1 see the same coordinates for the bridge.
-		var rnd = new System.Random(context.Seed + (chunkIndex - 1)); 
-		return new Vector3I(
-			rnd.Next(20, width - 20),
-			0, // Y is irrelevant for the anchor, we use this for both Top/Bottom
-			rnd.Next(20, depth - 20)
-		);
-	}
-
 	private BiomeType GetBiomeForChunk(int chunkIndex, WorldContext context)
 	{
 		var rnd = new System.Random(context.Seed + chunkIndex * 777);

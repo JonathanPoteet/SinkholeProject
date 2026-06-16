@@ -9,11 +9,28 @@ using System.Linq;
 public partial class CarvePaths : Node
 {
 	public enum BiomeType { Cave, Cavern }
-
+	public enum RoomType {Minor, Major}
+	
 	private class Room
 	{
 		public Vector3I Center;
 		public int Width, Height, Depth;
+		public RoomType Type { get; set; }
+		
+		// Helper to get the bounding box boundaries
+		public int XMin => Center.X - (Width / 2);
+		public int XMax => Center.X + (Width / 2);
+		public int YMin => Center.Y - (Height / 2);
+		public int YMax => Center.Y + (Height / 2);
+		public int ZMin => Center.Z - (Depth / 2);
+		public int ZMax => Center.Z + (Depth / 2);
+
+			public bool Intersects(Room other, int padding = 2)
+		{
+			return (this.XMin - padding < other.XMax + padding && this.XMax + padding > other.XMin - padding) &&
+				   (this.YMin - padding < other.YMax + padding && this.YMax + padding > other.YMin - padding) &&
+				   (this.ZMin - padding < other.ZMax + padding && this.ZMax + padding > other.ZMin - padding);
+		}
 		// Stores references to connected rooms
 		public List<Room> Neighbors = new List<Room>(); 
 	}
@@ -52,8 +69,10 @@ public partial class CarvePaths : Node
 	}
 	
 	// 2. GENERATE ROOMS
-	List<Room> majorRooms = GenerateRooms(rnd, width, height, depth, biome, chunkIndex, 5);
-	List<Room> minorRooms = GenerateRooms(rnd, width, height, depth, biome, chunkIndex, 10);
+	List<Room> allRooms = new List<Room>();
+	GenerateRooms(allRooms, rnd, width, height, depth, biome, chunkIndex);
+	List<Room> majorRooms = allRooms.Where(r => r.Type == RoomType.Major).ToList();
+	List<Room> minorRooms = allRooms.Where(r => r.Type == RoomType.Minor).ToList();
 	majorRooms.Sort((a, b) => b.Center.Y.CompareTo(a.Center.Y));
 	
 	for (int i = 0; i < majorRooms.Count - 1; i++)
@@ -89,7 +108,9 @@ foreach (var minor in minorRooms)
 	Connect(minor, closestMajor);
 	
 	// Now carve the connection
-	CarveRaggedShaft(minor.Center, closestMajor.Center, map, width, height, depth, context);
+	Vector3I startPoint = GetExitPoint(minor, minor.Center);
+	Vector3I endPoint = GetExitPoint(closestMajor, closestMajor.Center);
+	CarvePath(startPoint, endPoint, map, width, height, depth, biome, context);
 }
 
 // 3. Carve the Major Spine
@@ -100,7 +121,9 @@ foreach (var room in majorRooms)
 		// Ensure we only carve once per connection
 		if (majorRooms.IndexOf(neighbor) > majorRooms.IndexOf(room))
 		{
-			CarveRaggedShaft(room.Center, neighbor.Center, map, width, height, depth, context);
+			Vector3I startPoint = GetExitPoint(room, room.Center);
+			Vector3I endPoint = GetExitPoint(neighbor, neighbor.Center);
+			CarvePath(startPoint, endPoint, map, width, height, depth, biome, context);
 		}
 	}
 }
@@ -123,12 +146,14 @@ foreach (var room in majorRooms)
 	// 5. CONNECT EVERYTHING
 	// A. Connect Entry -> First Room
 	foreach (var entry in entryPoints) {
-		CarveVerticalShaft(entry, majorRooms[0].Center, map, width, height, depth, biome, context);
+		Room closestRoom = FindNearestRoom(entry, allRooms);
+		CarvePath(entry, closestRoom.Center, map, width, height, depth, biome, context);
 	}
 
 	// B. Connect Last Room -> Exits //should be carve closest room to exits
 	foreach (var exit in currentChunk.ExitPoints) {
-		CarveVerticalShaft(majorRooms[^1].Center, exit, map, width, height, depth, biome, context);
+		Room closestRoom = FindNearestRoom(exit, allRooms);
+		CarvePath(closestRoom.Center, exit, map, width, height, depth, biome, context);
 	}
 	
 }
@@ -140,63 +165,78 @@ foreach (var room in majorRooms)
 
 	// --- Room Generation ---
 
-	private List<Room> GenerateRooms(System.Random rnd, int width, int height, int depth, BiomeType biome, int chunkIndex, int roomCount)
+	private void GenerateRooms(List<Room> rooms, System.Random rnd, int width, int height, int depth, BiomeType biome, int chunkIndex)
 	{
-		var rooms = new List<Room>();
-		//int roomCount = 5; // TODO: go to a bigger size once pathing is figured out
-		//int roomCount = rnd.Next(10, 30);
-		int sectionHeight = height / roomCount;
+		int majorRoomCount = 5; // TODO: go to a bigger size once pathing is figured out
+		int minorRoomCount = 5;
+		int sectionHeight = height / (majorRoomCount + minorRoomCount);
 		// Spread rooms evenly across the chunk height
-			int yOffset = 0;
-			if (chunkIndex == 0) {
-				yOffset = 20; //if first chunk then we need to account for the terrain usage which consists of the first 20 voxel rows
-			} 
+		int yOffset = 10;
+		if (chunkIndex == 0) {
+			yOffset = 40; //if first chunk then we need to account for the terrain usage which consists of the first 20 voxel rows
+		} 
 
-		for (int i = 0; i < roomCount; i++)
-		{
-			int yMin = i * sectionHeight + sectionHeight / 4;
-			int yMax = (i + 1) * sectionHeight - sectionHeight / 4;
-			
-			int roomY = rnd.Next(yMin, yMax) - yOffset;
-			// Ensure Y doesn't exceed the original physical chunk height
-			roomY = Math.Clamp(roomY, 0, depth - 1);
-		
-			int roomX = rnd.Next(20, width - 20);
-			int roomZ = rnd.Next(20, depth - 20);
+		void TryCreateRoom(RoomType type, int offset) {
+			bool placed = false;
+			int attempts = 0;
+			while (!placed && attempts < 100) // Limit attempts to avoid infinite hang
+				{
+					// 1. Generate random coordinates (your existing logic)
+					// ... (roomX, roomY, roomZ logic)
 
-			int roomW, roomH, roomD;
-			switch (biome)
-			{
-				case BiomeType.Cavern:
-					roomW = rnd.Next(20, 35);
-					roomH = rnd.Next(6, 12);
-					roomD = rnd.Next(20, 35);
-					break;
-				case BiomeType.Cave:
-				default:
-					roomW = rnd.Next(12, 25);
-					roomH = rnd.Next(8, 16);
-					roomD = rnd.Next(12, 25);
-					break;
+
+					// Generate Y directly within the safe bounds
+					int roomY = rnd.Next(10, height - yOffset);
+					
+					// No subtraction needed here!
+					int roomX = rnd.Next(20, width - 20);
+					int roomZ = rnd.Next(20, depth - 20);
+
+					int roomW, roomH, roomD;
+					switch (biome)
+					{
+						case BiomeType.Cavern:
+						case BiomeType.Cave:
+						default:
+							roomW = rnd.Next(12, 25);
+							roomH = rnd.Next(8, 16);
+							roomD = rnd.Next(12, 25);
+							break;
+					}
+					
+					var newRoom = new Room{
+						Center = new Vector3I(roomX, roomY, roomZ),
+						Width  = roomW,
+						Height = roomH,
+						Depth  = roomD,
+						Type = type
+					};
+					// 2. Check for collisions
+					bool collision = false;
+					foreach (var existingRoom in rooms)
+					{
+						if (newRoom.Intersects(existingRoom))
+						{
+							collision = true;
+							break;
+						}
+					}
+
+					// 3. Place if clear
+					if (!collision)
+					{
+						GD.Print($"Rooms generated: {newRoom.Type}");
+						rooms.Add(newRoom);
+						placed = true;
+					}
+					
+					attempts++;
+				}
 			}
-
-			var newRoom = new Room{
-				Center = new Vector3I(roomX, roomY, roomZ),
-				Width  = roomW,
-				Height = roomH,
-				Depth  = roomD
-			};
-
-			int xMin = newRoom.Center.X - (newRoom.Width / 2);
-			int xMax = newRoom.Center.X + (newRoom.Width / 2);
-			int zMin = newRoom.Center.Z - (newRoom.Depth / 2);
-			int zMax = newRoom.Center.Z + (newRoom.Depth / 2);
-
-			rooms.Add(newRoom);
-			Debug.WriteLine($"[Room {i}] Pos: ({newRoom.Center.X}, {newRoom.Center.Y}, {newRoom.Center.Z}) | Size: {newRoom.Width}x{newRoom.Height}x{newRoom.Depth}");
-		}
-
-		return rooms;
+		// Generate Major
+		for (int i = 0; i < majorRoomCount; i++) TryCreateRoom(RoomType.Major, yOffset);
+		// Generate Minor
+		for (int i = 0; i < minorRoomCount; i++) TryCreateRoom(RoomType.Minor, yOffset);
 	}
 
 	private Room FindNearestRoom(Vector3I point, List<Room> rooms)
@@ -223,85 +263,43 @@ foreach (var room in majorRooms)
 		switch (biome)
 		{
 			case BiomeType.Cave:
-				CarveBlobRoom(room, map, width, height, depth, context);
-				break;
 			case BiomeType.Cavern:
+			default:
 				CarveCavernRoom(room, map, width, height, depth, context);
 				break;
 		}
 	}
 
-	// Irregular noise-carved blob
-	private void CarveBlobRoom(Room room, int[,,] map, int width, int height, int depth, WorldContext context)
-	{
-		int hw = room.Width / 2;
-		int hh = room.Height / 2;
-		int hd = room.Depth / 2;
-
-		for (int x = -hw; x <= hw; x++)
-		for (int y = -hh; y <= hh; y++)
-		for (int z = -hd; z <= hd; z++)
-		{
-			float noise = context.Noise.GetNoise3D(
-				(room.Center.X + x) * 0.3f,
-				(room.Center.Y + y) * 0.3f,
-				(room.Center.Z + z) * 0.3f);
-
-			float nx = (float)x / hw;
-			float ny = (float)y / hh;
-			float nz = (float)z / hd;
-			float ellipse = nx * nx + ny * ny + nz * nz;
-
-			if (ellipse + noise * 0.4f < 1.0f)
-				SafeCarve(room.Center.X + x, room.Center.Y + y, room.Center.Z + z,
-					map, width, height, depth);
-		}
-	}
-
-	// Strict rectangular box
-	private void CarveBoxRoom(Room room, int[,,] map, int width, int height, int depth)
-	{
-		int hw = room.Width / 2;
-		int hh = room.Height / 2;
-		int hd = room.Depth / 2;
-
-		for (int x = -hw; x <= hw; x++)
-		for (int y = -hh; y <= hh; y++)
-		for (int z = -hd; z <= hd; z++)
-			SafeCarve(room.Center.X + x, room.Center.Y + y, room.Center.Z + z,
-				map, width, height, depth);
-	}
-
 	// Large flat noise ellipse
 	private void CarveCavernRoom(Room room, int[,,] map, int width, int height, int depth, WorldContext context)
 	{
-		int hw = room.Width / 2;
-		int hh = room.Height / 2;
-		int hd = room.Depth / 2;
+		// Calculate the actual voxel boundaries for this room
+		int xStart = room.Center.X - (room.Width / 2);
+		int xEnd   = room.Center.X + (room.Width / 2);
+		
+		int yStart = room.Center.Y - (room.Height / 2);
+		int yEnd   = room.Center.Y + (room.Height / 2);
+		
+		int zStart = room.Center.Z - (room.Depth / 2);
+		int zEnd   = room.Center.Z + (room.Depth / 2);
 
-		for (int x = -hw; x <= hw; x++)
-		for (int y = -hh; y <= hh; y++)
-		for (int z = -hd; z <= hd; z++)
+		// Iterate through the box and carve
+		for (int x = xStart; x <= xEnd; x++)
 		{
-			float nx = (float)x / hw;
-			float ny = (float)(y * 2) / hh; // flatten vertically
-			float nz = (float)z / hd;
-			float ellipse = nx * nx + ny * ny + nz * nz;
-
-			float noise = context.Noise.GetNoise3D(
-				(room.Center.X + x) * 0.15f,
-				(room.Center.Y + y) * 0.15f,
-				(room.Center.Z + z) * 0.15f) * 0.3f;
-
-			if (ellipse + noise < 1.0f)
-				SafeCarve(room.Center.X + x, room.Center.Y + y, room.Center.Z + z,
-					map, width, height, depth);
+			for (int y = yStart; y <= yEnd; y++)
+			{
+				for (int z = zStart; z <= zEnd; z++)
+				{
+					// We use SafeCarve to turn Solid (0) into Air (1)
+					SafeCarve(x, y, z, map, width, height, depth);
+				}
+			}
 		}
 	}
 
 	// --- Shaft Carvers ---
 
-	private void CarveVerticalShaft(Vector3I start, Vector3I end, int[,,] map,
+	private void CarvePath(Vector3I start, Vector3I end, int[,,] map,
 		int width, int height, int depth, BiomeType biome, WorldContext context)
 	{
 		switch (biome)
@@ -358,20 +356,36 @@ private void CarveRaggedShaft(Vector3I start, Vector3I end, int[,,] map,
 		}
 	}
 
-	private void CarveRadius(int cx, int cy, int cz, int radius, int[,,] map,
-		int width, int height, int depth)
+private void CarveRadius(int cx, int cy, int cz, int radius, int[,,] map, int width, int height, int depth)
+{
+	int rSq = radius * radius; // Pre-calculate squared radius for performance
+	for (int ix = -radius; ix <= radius; ix++)
 	{
-		for (int x = -radius; x <= radius; x++)
-		for (int y = -radius; y <= radius; y++)
-		for (int z = -radius; z <= radius; z++)
-			if (x * x + y * y + z * z <= radius * radius)
-				SafeCarve(cx + x, cy + y, cz + z, map, width, height, depth);
+		for (int iy = -radius; iy <= radius; iy++)
+		{
+			for (int iz = -radius; iz <= radius; iz++)
+			{
+				// Check if this offset point is within the sphere radius
+				if (ix * ix + iy * iy + iz * iz <= rSq)
+				{
+					SafeCarve(cx + ix, cy + iy, cz + iz, map, width, height, depth);
+				}
+			}
+		}
 	}
+}
 
-	private void SafeCarve(int x, int y, int z, int[,,] map, int width, int height, int depth)
+private void SafeCarve(int x, int y, int z, int[,,] map, int width, int height, int depth)
+{
+	// Bounds check
+	if (x > 0 && x < width - 1 && y >= 0 && y < height && z > 0 && z < depth - 1)
 	{
-		if (x > 0 && x < width - 1 && y >= 0 && y < height && z > 0 && z < depth - 1)
-			map[x, y, z] = 0;
+		// Only turn 0 (Solid) into 1 (Air). 
+		// If it is already 1, we leave it alone. 
+		// This prevents tunnels from "erasing" walls that are already 
+		// part of a room or another tunnel path.
+		map[x, y, z] = 0;
+		}
 	}
 
 	
@@ -380,4 +394,32 @@ private void CarveRaggedShaft(Vector3I start, Vector3I end, int[,,] map,
 		var rnd = new System.Random(context.Seed + chunkIndex * 777);
 		return (BiomeType)rnd.Next(0, 3);
 	}
+	
+	private Vector3I GetExitPoint(Room startRoom, Vector3I targetCenter)
+{
+	// 1. Calculate the center of the start room
+	Vector3I startCenter = startRoom.Center;
+
+	// 2. Determine which direction to head
+	// This gives us a vector from start to target
+	Vector3I direction = targetCenter - startCenter;
+
+	// 3. Scale the direction to hit the room's boundary
+	// We use a ratio based on the room's half-extents
+	float ratioX = (float)startRoom.Width / (2 * Math.Abs(direction.X));
+	float ratioY = (float)startRoom.Height / (2 * Math.Abs(direction.Y));
+	float ratioZ = (float)startRoom.Depth / (2 * Math.Abs(direction.Z));
+
+	// Pick the smallest ratio to ensure we don't overshoot the room's box
+	float minRatio = Math.Min(ratioX, Math.Min(ratioY, ratioZ));
+
+	// 4. Return the coordinate on the surface
+	return new Vector3I(
+		startCenter.X + (int)(direction.X * minRatio),
+		startCenter.Y + (int)(direction.Y * minRatio),
+		startCenter.Z + (int)(direction.Z * minRatio)
+	);
+}
+	
+	
 }

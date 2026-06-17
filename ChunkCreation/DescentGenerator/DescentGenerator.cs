@@ -13,15 +13,6 @@ using SinkholeProject.PathController;
 public partial class DescentGenerator : Node
 {
 	
-	public class PathSegment {
-		public List<Vector3I> Voxels = new List<Vector3I>();
-		public PathSegment(List<Vector3I> pathVoxels)
-		{
-			Voxels = pathVoxels;
-		}
-		//public PathProfile Profile { get; set; }
-	}
-	
 	// Helper method to keep things bidirectional
 	private void Connect(Room a, Room b)
 	{
@@ -37,9 +28,6 @@ public partial class DescentGenerator : Node
 		int width  = currentChunk.width;
 		int depth  = currentChunk.depth;
 		int[,,] map = currentChunk.MapData;
-
-		BiomeType biome = SetBiomeForChunk(chunkIndex, context);
-		var rnd = new System.Random(context.Seed + chunkIndex);
 
 		// 1. DETERMINE ENTRY POINTS
 		List<Vector3I> entryPoints = new List<Vector3I>();
@@ -58,7 +46,7 @@ public partial class DescentGenerator : Node
 		
 		// 2. GENERATE ROOMS
 		List<Room> allRooms = new List<Room>();
-		rc.GenerateRooms(allRooms, rnd, width, height, depth, biome, chunkIndex);
+		rc.GenerateRooms(allRooms, width, height, depth, currentChunk.Biome, chunkIndex, context.Rnd, currentChunk.ReservedVolumes);
 		List<Room> majorRooms = allRooms.Where(r => r.Type == RoomType.Major).ToList();
 		List<Room> minorRooms = allRooms.Where(r => r.Type == RoomType.Minor).ToList();
 		majorRooms.Sort((a, b) => b.Center.Y.CompareTo(a.Center.Y));
@@ -67,7 +55,7 @@ public partial class DescentGenerator : Node
 			{
 				// A 30% chance to swap with the next room
 				// This allows the path to momentarily go "up" before moving "down"
-				if (rnd.NextDouble() < 0.3)
+				if (context.Rnd.NextDouble() < 0.3)
 				{
 					var temp = majorRooms[i];
 					majorRooms[i] = majorRooms[i + 1];
@@ -98,7 +86,7 @@ public partial class DescentGenerator : Node
 				// Now carve the connection
 				Vector3I startPoint = rc.GetRoomConnectionPoint(minor, minor.Center);
 				Vector3I endPoint = rc.GetRoomConnectionPoint(closestMajor, closestMajor.Center);
-				pc.CarvePath(startPoint, endPoint, map, width, height, depth, biome, context);
+				pc.CarvePath(startPoint, endPoint, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
 			}
 
 			// 3. Carve the Major Spine
@@ -111,35 +99,36 @@ public partial class DescentGenerator : Node
 					{
 						Vector3I startPoint = rc.GetRoomConnectionPoint(room, room.Center);
 						Vector3I endPoint = rc.GetRoomConnectionPoint(neighbor, neighbor.Center);
-						pc.CarvePath(startPoint, endPoint, map, width, height, depth, biome, context);
+						pc.CarvePath(startPoint, endPoint, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
 					}
 				}
 			}
 
 		// 3. GENERATE EXIT POINTS (For the next chunk)
-		List<Vector3I> generatedExits = GenerateExits(allRooms, rnd, width, depth, 30);
+		List<Vector3I> generatedExits = GenerateExits(allRooms, context.Rnd, width, depth, 30);
 
 	// 2. Save them to the current chunk's data structure
 		currentChunk.ExitPoints = generatedExits;
 		
+		//TODO move this into the generate workflow for rooms
 		// 4. CARVE ROOMS
 		foreach (var room in majorRooms) {
-			rc.CarveRoom(room, map, width, height, depth, biome, context);
+			rc.CarveRoom(room, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd);
 		}
 		foreach (var room in minorRooms) {
-			rc.CarveRoom(room, map, width, height, depth, biome, context);
+			rc.CarveRoom(room, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd);
 		}
 		// 5. CONNECT EVERYTHING
 		// A. Connect Entry -> First Room
 		foreach (var entry in entryPoints) {
 			Room closestRoom = rc.FindNearestRoom(entry, allRooms);
-			pc.CarvePath(entry, closestRoom.Center, map, width, height, depth, biome, context);
+			pc.CarvePath(entry, closestRoom.Center, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
 		}
 
 		// B. Connect Last Room -> Exits //should be carve closest room to exits
 		foreach (var exit in currentChunk.ExitPoints) {
 			Room closestRoom = rc.FindNearestRoom(exit, allRooms);
-			pc.CarvePath(closestRoom.Center, exit, map, width, height, depth, biome, context);
+			pc.CarvePath(closestRoom.Center, exit, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
 		}
 		
 	}
@@ -148,13 +137,6 @@ public partial class DescentGenerator : Node
 
 
 
-// sets the biome type	
-	private BiomeType SetBiomeForChunk(int chunkIndex, WorldContext context)
-	{
-		var rnd = new System.Random(context.Seed + chunkIndex);
-		return (BiomeType)rnd.Next(0, 3);
-	}
-	
 		private List<Vector3I> GenerateExits(List<Room> rooms, System.Random rnd, int width, int depth, int minDistance) 
 		{
 			List<Vector3I> exits = new List<Vector3I>();

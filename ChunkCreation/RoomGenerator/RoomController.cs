@@ -6,10 +6,12 @@ using SinkholeProject.Helper.VoxelUtils;
 using SinkholeProject.Helper.Initialization;
 using SinkholeProject.Rooms;
 namespace SinkholeProject.RoomController;
+using SinkholeProject.World;
+using SinkholeProject.Helper.Volumes;
 public partial class RoomController : Node
 {
 	
-	public void GenerateRooms(List<Room> rooms, System.Random rnd, int width, int height, int depth, BiomeType biome, int chunkIndex)
+	public void GenerateRooms(List<Room> rooms, int width, int height, int depth, BiomeType biome, int chunkIndex, System.Random rnd, List<Bounds> reservedVolumes)
 	{
 		int majorRoomCount = 5; // TODO: go to a bigger size once pathing is figured out
 		int minorRoomCount = 5;
@@ -17,41 +19,48 @@ public partial class RoomController : Node
 		// Spread rooms evenly across the chunk height
 		int yOffset = 10;
 		if (chunkIndex == 0) {
-			yOffset = 40; //if first chunk then we need to account for the terrain usage which consists of the first 20 voxel rows
+			yOffset = 20; //if first chunk then we need to account for the terrain usage which consists of the first 20 voxel rows
 		} 
 
 		void TryCreateRoom(RoomType type, int offset) {
 			bool placed = false;
 			int attempts = 0;
-			while (!placed && attempts < 100) // Limit attempts to avoid infinite hang
+			while (!placed && attempts < 30) // Limit attempts to avoid infinite hang
 				{
-					// 1. Generate random coordinates (your existing logic)
-					// ... (roomX, roomY, roomZ logic)
+						// 1. Choose size first
+						int roomW = rnd.Next(10, 40);
+						int roomH = rnd.Next(8, 25);
+						int roomD = rnd.Next(10, 40);
 
+						// 2. Define the safe margins (your buffer)
+						int margin = 5;
 
-					// Generate Y directly within the safe bounds
-					int roomY = rnd.Next(10, height - yOffset);
-					
-					int roomX = rnd.Next(20, width - 20);
-					int roomZ = rnd.Next(20, depth - 20);
+						// 3. Calculate the valid range for the center point
+						// The center must be at least (size/2 + margin) away from any wall
+						int minX = (roomW / 2) + margin;
+						int maxX = width - (roomW / 2) - margin;
 
-					int roomW, roomH, roomD;
-					switch (biome)
-					{
-						case BiomeType.Cavern:
-						case BiomeType.Cave:
-						default:
-							roomW = rnd.Next(12, 25);
-							roomH = rnd.Next(8, 16);
-							roomD = rnd.Next(12, 25);
-							break;
-					}
+						int minY = (roomH / 2) + margin;
+						int maxY = height - (roomH / 2) - margin - offset;
+
+						int minZ = (roomD / 2) + margin;
+						int maxZ = depth - (roomD / 2) - margin;
+
+						// 4. Generate the center point within those safe ranges
+						// If min > max, the room is too big to fit in this chunk!
+						if (minX <= maxX && minY <= maxY && minZ <= maxZ)
+						{
+							int roomX = rnd.Next(minX, maxX);
+							int roomY = rnd.Next(minY, maxY);
+							int roomZ = rnd.Next(minZ, maxZ);
+							
+							// Now create your room...
+					var bounds = new Bounds(new Vector3I(roomX, roomY, roomZ),roomW, 
+						roomH, roomD);
 					
 					var newRoom = new Room(
 						new Vector3I(roomX, roomY, roomZ), 
-						roomW, 
-						roomH, 
-						roomD, 
+						bounds, 
 						type
 					);
 					// 2. Check for collisions
@@ -66,11 +75,14 @@ public partial class RoomController : Node
 					}
 
 					// 3. Place if clear
-					if (!collision)
-					{
-						GD.Print($"Rooms generated: {newRoom.Type}");
-						rooms.Add(newRoom);
-						placed = true;
+						if (!collision)
+						{
+							GD.Print($"Rooms generated: {newRoom.Type}");
+							reservedVolumes.Add(bounds);
+							
+							rooms.Add(newRoom);
+							placed = true;
+						}
 					}
 					
 					attempts++;
@@ -125,20 +137,20 @@ public partial class RoomController : Node
 	}
 	
 	public void CarveRoom(Room room, int[,,] map, int width, int height, int depth,
-		BiomeType biome, WorldContext context)
+		BiomeType biome, System.Random rnd)
 	{
 		switch (biome)
 		{
 			case BiomeType.Cave:
 			case BiomeType.Cavern:
 			default:
-				CarveCavernRoom(room, map, width, height, depth, context);
+				CarveCavernRoom(room, map, width, height, depth);
 				break;
 		}
 	}
 
 	// Large cube
-	private void CarveCavernRoom(Room room, int[,,] map, int width, int height, int depth, WorldContext context)
+	private void CarveCavernRoom(Room room, int[,,] map, int width, int height, int depth)
 	{
 		// Calculate the actual voxel boundaries for this room
 		int xStart = room.Bounds.Min.X;

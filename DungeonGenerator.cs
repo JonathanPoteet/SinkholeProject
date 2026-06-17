@@ -1,6 +1,6 @@
 using Godot;
 using System;
-using SinkholeProject.ChunkCreation.CarvePaths;
+using SinkholeProject.ChunkCreation.DescentGenerator;
 using SinkholeProject.ChunkCreation.GenerateMesh;
 using SinkholeProject.ChunkCreation.StitchChunk;
 
@@ -33,7 +33,7 @@ public partial class DungeonGenerator : Node3D
 					chunkInitializer.GenerateChunk(i, _context);
 				}
 				
-		CarvePaths carver = new CarvePaths();
+		DescentGenerator carver = new DescentGenerator();
 		for(int i = 0; i < 3; i++) {
 			carver.CarveSeededVerticalPath(i, _context);
 		}

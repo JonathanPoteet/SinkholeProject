@@ -1,7 +1,7 @@
 using Godot;
 using System.Collections.Generic;
 namespace SinkholeProject.Helper.Initialization;
-
+using SinkholeProject.Rooms;
 public class Chunk
 {
 	public int[,,] MapData;
@@ -13,17 +13,7 @@ public class Chunk
 	// Biome and planning data lives on the chunk directly
 	public BiomeType Biome;
 	public List<Room> Rooms              = new();
-	public List<(int From, int To)> Edges = new();
-	public List<int> GuaranteedPath      = new();
 	public List<Vector3I> ExitPoints = new List<Vector3I>();
 }
 
 public enum BiomeType { Cave, Tunnel, Cavern }
-
-public struct Room
-{
-	public Vector3I Center;
-	public int Width;
-	public int Height;
-	public int Depth;
-}

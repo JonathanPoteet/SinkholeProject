@@ -23,7 +23,7 @@ public partial class InitializeChunk : Node
 		pastOffset = context.WorldChunks[chunkIndex - 1].GlobalYOffset;
 		pastHeight = context.WorldChunks[chunkIndex - 1].height;
 	} else {
-		newChunk.height = newChunk.height + 20; //adding 20 to give more room since the terrain takes up space
+		newChunk.height = 30; //adding 0 to give more room since the terrain takes up space
 	}
 
 	newChunk.GlobalYOffset = (chunkIndex == 0) ? newChunk.height : pastOffset - pastHeight;

@@ -2,7 +2,7 @@ extends CharacterBody3D
 
 # Movement Constants
 const SPEED = 5.0
-const JUMP_VELOCITY = 4.5
+const JUMP_VELOCITY = 10
 const GRAVITY = 15.0 # Define gravity properly
 
 # Mouse Look Variables

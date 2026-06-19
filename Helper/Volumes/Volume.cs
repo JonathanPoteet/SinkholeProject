@@ -1,5 +1,5 @@
 using Godot;
-
+using SinkholeProject.Rooms;
 namespace SinkholeProject.Helper.Volumes
 {
 	/// <summary>
@@ -10,6 +10,9 @@ namespace SinkholeProject.Helper.Volumes
 	{
 		public Vector3I Min { get; }
 		public Vector3I Max { get; }
+		public int Width  => Max.X - Min.X;
+		public int Height => Max.Y - Min.Y;
+		public int Depth  => Max.Z - Min.Z;
 
 		public Bounds(Vector3I center, int w, int h, int d)
 	{
@@ -23,7 +26,7 @@ namespace SinkholeProject.Helper.Volumes
 		Max = max;
 	}
 
-	public bool Intersects(Bounds other, int padding = 5) //keeping a high padding by default for room generation to have the rooms not be impossible to separate
+	public bool Intersects(Bounds other, int padding = 0) //keeping a high padding by default for room generation to have the rooms not be impossible to separate
 	{
 		// Standard AABB intersection test
 		return (Min.X - padding < other.Max.X + padding && Max.X + padding > other.Min.X - padding) &&

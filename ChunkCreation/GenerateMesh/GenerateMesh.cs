@@ -34,7 +34,46 @@ public partial class GenerateMesh : Node
 	for (int y = yStart; y < yEnd; y++)
 		for (int x = 0; x < context.WorldChunks[chunkIndex].width - 1; x++)
 			for (int z = 0; z < context.WorldChunks[chunkIndex].depth - 1; z++)
+			{	
 				MarchCube(st, x, y, z, map, chunkIndex, context.WorldChunks);
+			}
+
+
+			var currentChunk = context.WorldChunks[chunkIndex];
+				var roomsInChunk = currentChunk.Rooms;
+				GD.Print("Is this being hit");
+				GD.Print($"Rooms in chunk: {roomsInChunk.Count}");
+				foreach (var room in roomsInChunk)
+			{
+				
+				GD.Print($"Room has a Light: {room.HasLight}");
+				if (room.HasLight)
+				{
+					var orb = new MeshInstance3D();
+					orb.Mesh = new SphereMesh { Radius = 0.5f, Height = 1.0f };
+					orb.Position = new Vector3(room.Center.X, room.Center.Y, room.Center.Z);
+					
+					// 2. Give the orb a glowing material
+					var material = new StandardMaterial3D();
+					material.EmissionEnabled = true;
+					material.Emission = new Color(0.9f, 0.8f, 0.5f);
+					material.EmissionEnergyMultiplier = 5.0f; // Makes it glow bright
+					orb.MaterialOverride = material;
+					
+					// 3. Attach the light to the orb
+					var light = new OmniLight3D();
+					light.LightColor = new Color(0.9f, 0.8f, 0.5f);
+					light.LightEnergy = 2.0f;
+					light.OmniRange = 20.0f;
+					
+					// Parent light to orb so they move as one unit
+					orb.AddChild(light);
+					
+					// Add the whole "Orb assembly" to the chunk mesh
+					newChunkMesh.AddChild(orb);
+				}	
+			}
+
 
 	st.GenerateNormals();
 	st.Index();

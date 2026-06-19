@@ -8,120 +8,103 @@ using SinkholeProject.Rooms;
 namespace SinkholeProject.RoomController;
 using SinkholeProject.World;
 using SinkholeProject.Helper.Volumes;
+using System.Linq;
 public partial class RoomController : Node
 {
 	
-	public void GenerateRooms(List<Room> rooms, int width, int height, int depth, BiomeType biome, int chunkIndex, System.Random rnd, List<Bounds> reservedVolumes)
+	public void GenerateRooms(List<Room> rooms, int cellW, int cellH, int cellD, BiomeType biome, int chunkIndex, System.Random rnd, List<Bounds> reservedVolumes, int[,,] map, int gridDiv, int padding)
+{
+		// Place one "Major" seed per grid cell
+	for (int x = 0; x < gridDiv; x++)
+	for (int y = 0; y < gridDiv; y++)
+	for (int z = 0; z < gridDiv; z++)
 	{
-		int majorRoomCount = 5; // TODO: go to a bigger size once pathing is figured out
-		int minorRoomCount = 5;
-		int sectionHeight = height / (majorRoomCount + minorRoomCount);
-		// Spread rooms evenly across the chunk height
-		int yOffset = 10;
-		if (chunkIndex == 0) {
-			yOffset = 20; //if first chunk then we need to account for the terrain usage which consists of the first 20 voxel rows
-		} 
-
-		void TryCreateRoom(RoomType type, int offset) {
-			bool placed = false;
-			int attempts = 0;
-			while (!placed && attempts < 30) // Limit attempts to avoid infinite hang
-				{
-						// 1. Choose size first
-						int roomW = rnd.Next(10, 40);
-						int roomH = rnd.Next(8, 25);
-						int roomD = rnd.Next(10, 40);
-
-						// 2. Define the safe margins (your buffer)
-						int margin = 5;
-
-						// 3. Calculate the valid range for the center point
-						// The center must be at least (size/2 + margin) away from any wall
-						int minX = (roomW / 2) + margin;
-						int maxX = width - (roomW / 2) - margin;
-
-						int minY = (roomH / 2) + margin;
-						int maxY = height - (roomH / 2) - margin - offset;
-
-						int minZ = (roomD / 2) + margin;
-						int maxZ = depth - (roomD / 2) - margin;
-
-						// 4. Generate the center point within those safe ranges
-						// If min > max, the room is too big to fit in this chunk!
-						if (minX <= maxX && minY <= maxY && minZ <= maxZ)
-						{
-							int roomX = rnd.Next(minX, maxX);
-							int roomY = rnd.Next(minY, maxY);
-							int roomZ = rnd.Next(minZ, maxZ);
-							
-							// Now create your room...
-					var bounds = new Bounds(new Vector3I(roomX, roomY, roomZ),roomW, 
-						roomH, roomD);
-					
-					var newRoom = new Room(
-						new Vector3I(roomX, roomY, roomZ), 
-						bounds, 
-						type
-					);
-					// 2. Check for collisions
-					bool collision = false;
-					foreach (var existingRoom in rooms)
-					{
-						if (newRoom.Bounds.Intersects(existingRoom.Bounds))
-						{
-							collision = true;
-							break;
-						}
-					}
-
-					// 3. Place if clear
-						if (!collision)
-						{
-							GD.Print($"Rooms generated: {newRoom.Type}");
-							reservedVolumes.Add(bounds);
-							
-							rooms.Add(newRoom);
-							placed = true;
-						}
-					}
-					
-					attempts++;
-				}
-			}
-		// Generate Major
-		for (int i = 0; i < majorRoomCount; i++) TryCreateRoom(RoomType.Major, yOffset);
-		// Generate Minor
-		for (int i = 0; i < minorRoomCount; i++) TryCreateRoom(RoomType.Minor, yOffset);
+		if (rnd.NextDouble() < 0.2) 
+		{
+				Vector3I cellCenter = new Vector3I(
+				padding + (x * cellW) + (cellW / 2),
+				padding + (y * cellH) + (cellH / 2),
+				padding + (z * cellD) + (cellD / 2)
+			);
+		
+			// Create a base volume for this seed
+			var seedBounds = new Bounds(cellCenter, rnd.Next(12, 18), rnd.Next(12, 18), rnd.Next(12, 18));
+			rooms.Add(new Room(cellCenter, seedBounds, RoomType.Major));
+			reservedVolumes.Add(seedBounds);
+		}
 	}
+
+	// 2. Growth Phase (The "Cluster" Phase)
+	// Add additional volumes that are guaranteed to be near existing rooms
+	int extraVolumes = 10;
+	for (int i = 0; i < extraVolumes; i++)
+	{
+		// Pick an existing room to grow from
+		var targetRoom = rooms[rnd.Next(rooms.Count)];
+		Vector3I growthCenter = targetRoom.Center + new Vector3I(rnd.Next(-10, 10), rnd.Next(-10, 10), rnd.Next(-10, 10));
+		
+		var newBounds = new Bounds(growthCenter, rnd.Next(8, 12), rnd.Next(8, 12), rnd.Next(8, 12));
+		
+		// Merge if it hits, otherwise add as new volume to that room
+		var collidingRoom = rooms.FirstOrDefault(r => r.Intersects(newBounds));
+		if (collidingRoom != null) collidingRoom.AddVolume(newBounds);
+		else rooms.Add(new Room(growthCenter, newBounds, RoomType.Minor));
+		
+		reservedVolumes.Add(newBounds);
+	}
+
+	// 3. Post-Process: Ensure classification matches the structure
+	var sortedRooms = rooms.OrderByDescending(r => r.GetTotalVolume()).ToList();
+	for (int i = 0; i < sortedRooms.Count; i++)
+	{
+		sortedRooms[i].Type = (i < 8) ? RoomType.Major : RoomType.Minor;
+	}
+	
+	
+	//finally carve the rooms
+	
+	foreach (var room in rooms) {
+		CarveRoom(room, map, biome);
+	}
+	
+	
+	
+}
 	
 	//establishes where the pathing starts/ends. From where a room will allow it
 	public Vector3I GetRoomConnectionPoint(Room startRoom, Vector3I targetCenter)
 	{
-		Vector3I startCenter = startRoom.Center;
-		Vector3I direction = targetCenter - startCenter;
+		// Initialize with a far-away point
+		Vector3I bestPoint = startRoom.Center;
+		float minDistance = float.MaxValue;
 
-		// Calculate half-extents from the Bounds
-		float halfW = (startRoom.Bounds.Max.X - startRoom.Bounds.Min.X) / 2.0f;
-		float halfH = (startRoom.Bounds.Max.Y - startRoom.Bounds.Min.Y) / 2.0f;
-		float halfD = (startRoom.Bounds.Max.Z - startRoom.Bounds.Min.Z) / 2.0f;
+		// Iterate through all volumes to find which one is closest to the target
+		foreach (var volume in startRoom.Volumes)
+		{
+			// Clamp the target center to the current volume's bounds to find the 
+			// closest point on/inside this specific volume
+			Vector3I closestPoint = new Vector3I(
+				Math.Clamp(targetCenter.X, volume.Min.X, volume.Max.X),
+				Math.Clamp(targetCenter.Y, volume.Min.Y, volume.Max.Y),
+				Math.Clamp(targetCenter.Z, volume.Min.Z, volume.Max.Z)
+			);
 
-		// Avoid division by zero if direction is 0 in any axis
-		float ratioX = direction.X != 0 ? halfW / Math.Abs(direction.X) : float.MaxValue;
-		float ratioY = direction.Y != 0 ? halfH / Math.Abs(direction.Y) : float.MaxValue;
-		float ratioZ = direction.Z != 0 ? halfD / Math.Abs(direction.Z) : float.MaxValue;
+			// Calculate distance from this point to the target center
+			float dist = (targetCenter - closestPoint).LengthSquared(); // Use squared for performance
 
-		float minRatio = Math.Min(ratioX, Math.Min(ratioY, ratioZ));
+			if (dist < minDistance)
+			{
+				minDistance = dist;
+				bestPoint = closestPoint;
+			}
+		}
 
-		return new Vector3I(
-			startCenter.X + (int)(direction.X * minRatio),
-			startCenter.Y + (int)(direction.Y * minRatio),
-			startCenter.Z + (int)(direction.Z * minRatio)
-		);
+		return bestPoint;
 	}
 	
 	public Room FindNearestRoom(Vector3I point, List<Room> rooms)
 	{
-		Room nearest = rooms[0];
+		Room nearest = null;
 		float bestDist = float.MaxValue;
 		foreach (var room in rooms)
 		{
@@ -136,45 +119,47 @@ public partial class RoomController : Node
 		return nearest;
 	}
 	
-	public void CarveRoom(Room room, int[,,] map, int width, int height, int depth,
-		BiomeType biome, System.Random rnd)
+	private void CarveRoom(Room room, int[,,] map,
+		BiomeType biome)
 	{
 		switch (biome)
 		{
 			case BiomeType.Cave:
 			case BiomeType.Cavern:
 			default:
-				CarveCavernRoom(room, map, width, height, depth);
+				CarveCavernRoom(room, map);
 				break;
 		}
 	}
 
 	// Large cube
-	private void CarveCavernRoom(Room room, int[,,] map, int width, int height, int depth)
+	private void CarveCavernRoom(Room room, int[,,] map)
 	{
-		// Calculate the actual voxel boundaries for this room
-		int xStart = room.Bounds.Min.X;
-		int xEnd   = room.Bounds.Max.X;
-		
-		int yStart = room.Bounds.Min.Y;
-		int yEnd   = room.Bounds.Max.Y;
-		
-		int zStart = room.Bounds.Min.Z;
-		int zEnd   = room.Bounds.Max.Z;
+		// Get array bounds dynamically from the map itself
+		int mapW = map.GetLength(0);
+		int mapH = map.GetLength(1);
+		int mapD = map.GetLength(2);
 
-		// Iterate through the box and carve
-		for (int x = xStart; x <= xEnd; x++)
+		foreach (var volume in room.Volumes)
 		{
+			// Clamp coordinates to the array bounds automatically
+			int xStart = Math.Max(0, volume.Min.X);
+			int xEnd   = Math.Min(mapW - 1, volume.Max.X);
+			
+			int yStart = Math.Max(0, volume.Min.Y);
+			int yEnd   = Math.Min(mapH - 1, volume.Max.Y);
+			
+			int zStart = Math.Max(0, volume.Min.Z);
+			int zEnd   = Math.Min(mapD - 1, volume.Max.Z);
+
+			for (int x = xStart; x <= xEnd; x++)
 			for (int y = yStart; y <= yEnd; y++)
+			for (int z = zStart; z <= zEnd; z++)
 			{
-				for (int z = zStart; z <= zEnd; z++)
-				{
-					// We use SafeCarve to turn Solid (0) into Air (1)
-					VoxelUtils.SafeCarve(x, y, z, map, width, height, depth);
-				}
+				// Now you know x, y, z are guaranteed to be within map bounds!
+				VoxelUtils.SafeCarve(x, y, z, map, mapW, mapH, mapD);
 			}
 		}
 	}
 
-	
 }

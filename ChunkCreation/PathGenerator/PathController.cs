@@ -23,18 +23,18 @@ public partial class PathController : Node
 
 		// 2. Validation: Check against Rooms and existing ReservedVolumes
 		
-		foreach (var segment in pathSegments)
-		{
-			// Check collision against other paths
-			foreach (var reserved in reservedVolumes)
-			{
-				if (segment.Intersects(reserved, padding: 2))
-				{
-					// Optional: Decide if you want to skip or merge
-					GD.Print("Path intersecting existing reservation.");
-				}
-			}
-		}
+		//foreach (var segment in pathSegments)
+		//{
+			//// Check collision against other paths
+			//foreach (var reserved in reservedVolumes)
+			//{
+				//if (segment.Intersects(reserved, padding: 2))
+				//{
+					//// Optional: Decide if you want to skip or merge
+					////GD.Print("Path intersecting existing reservation.");
+				//}
+			//}
+		//}
 
 		// 3. Commitment: Carve and Reserve
 		foreach (var v in pathVoxels)

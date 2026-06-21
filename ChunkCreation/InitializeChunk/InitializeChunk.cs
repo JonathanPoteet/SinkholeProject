@@ -12,7 +12,7 @@ public partial class InitializeChunk : Node
 
 	Random rnd = new Random(context.Seed + chunkIndex);
 	newChunk.width  = 100;
-	newChunk.height = rnd.Next(30,60);
+	newChunk.height = rnd.Next(50,100);
 	newChunk.depth  = 100;
 	
 

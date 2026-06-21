@@ -1,58 +1,84 @@
 using Godot;
 using System.Collections.Generic;
 using SinkholeProject.Helper.Volumes;
+using System.Linq;
+using SinkholeProject.Configuration;
+
 namespace SinkholeProject.Rooms
 {
 	public enum RoomType { Unassigned, Minor, Major }
 
 	public class Room
 	{
-		public Vector3I Center;
 		public RoomType Type { get; set; } = RoomType.Unassigned;
-		public List<Bounds> Volumes { get; set; } = new List<Bounds>();
+		public List<Vector3I> Cells { get; set; } = new List<Vector3I>();
 		public List<Room> Neighbors { get; set; } = new List<Room>();
-		public bool IsTerminal { get; set; } // Flag this if it's the end of the graph
+		public bool IsTerminal { get; set; }
 		public bool HasLight { get; set; }
-		public int Depth {get; set;}
+		public int Depth { get; set; }
+		private List<Bounds> _cachedBounds = new List<Bounds>();
+		public List<Vector3I> ConnectionPoints { get; set; } = new List<Vector3I>();
 		
-		public Room(Vector3I center, Bounds initialBounds, RoomType type = RoomType.Unassigned)
+		private Vector3I? _cachedCenter;
+
+		// Call this once after your RoomGenerator finishes adding all cells
+
+		public Vector3I Center => _cachedCenter ?? Vector3I.Zero;
+		
+		// Private field for settings
+		private ChunkSettings _settings;
+
+		public void FinalizeCenter()
 		{
-			Center = center;
-			Type = type;
-			Volumes.Add(initialBounds);
+			long sumX = 0, sumY = 0, sumZ = 0;
+			foreach (var cell in Cells)
+			{
+				// Convert grid index to physical center here
+				sumX += (cell.X * _settings.CellW) + (_settings.CellW / 2);
+				sumY += (cell.Y * _settings.CellH) + (_settings.CellH / 2);
+				sumZ += (cell.Z * _settings.CellD) + (_settings.CellD / 2);
+			}
+			
+			_cachedCenter = new Vector3I((int)(sumX / Cells.Count), (int)(sumY / Cells.Count), (int)(sumZ / Cells.Count));
+		}
+		
+		public Room(ChunkSettings settings)
+		{
 			IsTerminal = false;
 			HasLight = false;
 			Depth = -1;
+			// Use 'this' to distinguish the field from the parameter
+			_settings = settings;
 		}
-		
-		public void AddVolume(Bounds newBounds)
+
+		public void AddCell(Vector3I gridPos)
 		{
-			Volumes.Add(newBounds);
+			Cells.Add(gridPos);
+			_cachedBounds.Add(GetBoundsForCell(gridPos));
 		}
-		
-		public bool Intersects(Bounds newBounds, int padding = 0)
+
+		public bool Intersects(Bounds newBounds)
 		{
-			foreach (var myVolume in this.Volumes)
+			// Now you just iterate over the pre-calculated list
+			foreach (Bounds b in _cachedBounds)
 			{
-				// Compare existing volumes against the candidate bounds
-				if (myVolume.Intersects(newBounds, padding))
-				{
-					return true;
-				}
+				if (b.Intersects(newBounds)) return true;
 			}
 			return false;
 		}
-		
-		public int GetTotalVolume()
-		{
-			int total = 0;
-			foreach (var volume in Volumes)
-			{
-				// Assuming your Bounds class has Width, Height, and Depth properties
-				total += (volume.Width * volume.Height * volume.Depth);
-			}
-			return total;
-		}
 
+		public Bounds GetBoundsForCell(Vector3I cellPos)
+		{
+			// 1. Calculate the center position of the cell
+			// Depending on your grid logic, this usually involves adding half the dimensions
+			int centerX = _settings.Padding + (cellPos.X * _settings.CellW) + (_settings.CellW / 2);
+			int centerY = _settings.Padding + (cellPos.Y * _settings.CellH) + (_settings.CellH / 2);
+			int centerZ = _settings.Padding + (cellPos.Z * _settings.CellD) + (_settings.CellD / 2);
+
+			Vector3I center = new Vector3I(centerX, centerY, centerZ);
+
+			// 2. Pass the vector and the dimensions to your existing constructor
+			return new Bounds(center, _settings.CellW, _settings.CellH, _settings.CellD);
+		}
 	}
 }

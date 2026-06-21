@@ -10,15 +10,9 @@ using SinkholeProject.Helper.Initialization;
 using SinkholeProject.Rooms;
 using SinkholeProject.RoomController;
 using SinkholeProject.PathController;
+using SinkholeProject.Configuration;
 public partial class DescentGenerator : Node
 {
-	
-	// Helper method to keep things bidirectional
-	private void Connect(Room a, Room b)
-	{
-		if (!a.Neighbors.Contains(b)) a.Neighbors.Add(b);
-		if (!b.Neighbors.Contains(a)) b.Neighbors.Add(a);
-	}
 	
 
 	public void CarveSeededVerticalPath(int chunkIndex, WorldContext context)
@@ -29,17 +23,17 @@ public partial class DescentGenerator : Node
 		int width  = currentChunk.width;
 		int depth  = currentChunk.depth;
 		int[,,] map = currentChunk.MapData;
+		List<Room> allRooms = currentChunk.Rooms;
+		
 		// 1. Grid Configuration (The "Seed" Phase)
-		int padding = 10; // Keep everything 10 voxels away from the edges
+		int padding = 2; // Keep everything 10 voxels away from the edges
 		int playableWidth = width - (padding * 2);
 		int playableHeight = (height) - (padding * 2);
 		int playableDepth = depth - (padding * 2);
-
+		
 		// 2. Divide the playable space
-		int gridDiv = 4;
-		int cellW = playableWidth / gridDiv;
-		int cellH = playableHeight / gridDiv;
-		int cellD = playableDepth / gridDiv;
+		int gridDiv = 5;
+		ChunkSettings settings = new ChunkSettings(playableWidth, playableHeight, playableDepth, gridDiv, padding);
 
 		// 1. DETERMINE ENTRY POINTS
 		List<Vector3I> entryPoints = new List<Vector3I>();
@@ -55,23 +49,41 @@ public partial class DescentGenerator : Node
 				entryPoints.Add(new Vector3I(exit.Position.X, height - 1, exit.Position.Z));
 			}
 		}
-		
-		int exitCount = (chunkIndex == 0) ? 1 : context.Rnd.Next(1, 4);
-		
+		GD.Print($"Building entryPoints for Chunk: {chunkIndex}, Exits in prev chunk: {(chunkIndex > 0 ? context.WorldChunks[chunkIndex - 1].ExitPoints.Count : "N/A")}");
+			int exitCount = (chunkIndex == 0) ? 1 : context.Rnd.Next(1, 4);
 			
-				List<Room> allRooms = currentChunk.Rooms;
 			if (chunkIndex > 0) {
-				
-				// 2. GENERATE ROOMS
-				rc.GenerateRooms(allRooms, cellW, cellH, cellD, currentChunk.Biome, chunkIndex, context.Rnd, currentChunk.ReservedVolumes, map, gridDiv, padding);
-
-
-				// 1. Connect the Major Spine (The Golden Path)
+				rc.GenerateRooms(allRooms, currentChunk.Biome, chunkIndex, context.Rnd, currentChunk.ReservedVolumes, map, settings);
 				BuildDungeonGraph(allRooms, entryPoints, context.Rnd, exitCount);
+			} 
+			
+			List<ChunkExit> generatedExits = GenerateExits(allRooms, playableWidth, playableDepth, padding, chunkIndex);
+				currentChunk.ExitPoints = generatedExits;
+				GD.Print($"Generated Exits: {generatedExits.Count}");
 				
+			if (chunkIndex == 0)
+				{
+					GD.Print("First Chunk. Connecting Entry directly to Exit.");
+					
+					// Connect each entry point directly to each exit point (Transit mode)
+					foreach (var entry in entryPoints)
+					{
+						foreach (var exit in currentChunk.ExitPoints)
+						{
+							pc.CarvePath(entry, exit.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+						}
+					}
+				} else {
 				
 
-
+				foreach (var entry in entryPoints) {
+					var startRoom = allRooms.OrderBy(r => r.Center.DistanceTo(entry)).First();
+					if (startRoom != null) 
+					{
+					pc.CarvePath(entry, startRoom.Center, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+					}
+				}
+				
 				foreach (var room in allRooms)
 				foreach (var neighbor in room.Neighbors)
 				{
@@ -82,86 +94,79 @@ public partial class DescentGenerator : Node
 						pc.CarvePath(startPoint, endPoint, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
 					}
 				}
-	}
-
-		// 3. GENERATE EXIT POINTS (For the next chunk)
-		List<ChunkExit> generatedExits = GenerateExits(allRooms, playableWidth, playableDepth, padding, chunkIndex);
-//
-	//// 2. Save them to the current chunk's data structure
-		currentChunk.ExitPoints = generatedExits;
-		GD.Print($"Generated Exits: {generatedExits.Count}");
-		//
-		//// 5. CONNECT EVERYTHING
-		//// A. Connect Entry -> First Room
-		foreach (var entry in entryPoints) {
-			Room closestRoom = rc.FindNearestRoom(entry, allRooms);
-			if (closestRoom != null) 
-			{
-			pc.CarvePath(entry, closestRoom.Center, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
-			} else {
-				foreach (var exit in currentChunk.ExitPoints) {
-					pc.CarvePath(entry, exit.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
-				}
-			}
-		}
-		var terminals = allRooms.Where(r => r.IsTerminal).ToList();
-		//// B. Connect Last Room -> Exits //should carve from terminal room to exit
-		if (chunkIndex > 0) {
-			foreach (var connection in currentChunk.ExitPoints) {
+		
+				foreach (var connection in currentChunk.ExitPoints) {
 				Vector3I closestRoom = rc.GetRoomConnectionPoint(connection.ParentRoom, connection.Position);
 				pc.CarvePath(closestRoom, connection.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+				}	
 			}
-		}
+			
+				
+				
+				
 		
 	}
 
 		
-		public void BuildDungeonGraph(List<Room> rooms, List<Vector3I> entryPoints, System.Random rnd, int exitCount)
-		{
-			// 1. Reset state
-			foreach (var room in rooms) {
-				room.Neighbors.Clear();
-				room.Depth = -1;
-			}
+public void BuildDungeonGraph(List<Room> rooms, List<Vector3I> entryPoints, System.Random rnd, int exitCount)
+{
+	// 1. Reset
+	foreach (var r in rooms) { r.Neighbors.Clear(); r.Depth = 0; r.IsTerminal = false; }
 
-			Queue<Room> queue = new Queue<Room>();
-
-			// 2. Initialize from all entry points
-			foreach (var entry in entryPoints)
-			{
-				var startRoom = rooms.OrderBy(r => r.Center.DistanceTo(entry)).FirstOrDefault();
-				if (startRoom != null && startRoom.Depth == -1)
-				{
-					startRoom.Depth = 0;
-					queue.Enqueue(startRoom);
-				}
-			}
-
-	// 3. Process to ensure all rooms are visited
-	// We maintain a list of 'unvisited' to catch rooms that BFS didn't reach
-	while (queue.Count > 0 || rooms.Any(r => r.Depth == -1))
+	foreach (var room in rooms)
 	{
-		// If queue is empty but rooms remain, jump to the nearest unvisited room
-		if (queue.Count == 0)
+		int k = GetWeightedK(rnd);
+		var neighbors = rooms
+			.Where(r => r != room)
+			.OrderBy(r => r.Center.DistanceTo(room.Center))
+			.Take(k);
+
+		foreach (var neighbor in neighbors)
 		{
-			var next = rooms.Where(r => r.Depth == -1)
-							.OrderBy(r => rooms.Where(x => x.Depth != -1).Min(x => x.Center.DistanceTo(r.Center)))
-							.First();
-			next.Depth = 0; 
-			queue.Enqueue(next);
+			if (!room.Neighbors.Contains(neighbor))
+			{
+				room.Neighbors.Add(neighbor);
+				neighbor.Neighbors.Add(room); // Ensure bidirectional
+			}
 		}
+	}
+	
+	EnsureFullConnectivity(rooms, entryPoints);
+	
+	
+	// 4. Select exits that are the absolute furthest
+	// We order by Depth descending, so the largest depth numbers come first.
+	var selected = rooms
+		.OrderByDescending(r => r.Depth)
+		.Take(exitCount)
+		.ToList();
 
-		var current = queue.Dequeue();
+	foreach (var t in selected) { t.IsTerminal = true; t.HasLight = true; }
+}
 
-		// Find neighbors: We MUST ensure we connect to unvisited rooms
-		var candidates = rooms.Where(r => r != current)
-							  .OrderBy(r => current.Center.DistanceTo(r.Center))
-							  .Take(3); // Increase to 3 to ensure better connectivity
+private void EnsureFullConnectivity(List<Room> rooms, List<Vector3I> entryPoints)
+{
+	// 1. Reset depths
+	foreach (var r in rooms) r.Depth = -1;
 
-		foreach (var neighbor in candidates)
+	// 2. Initialize BFS with all entry points
+	var queue = new Queue<Room>();
+	foreach (var pt in entryPoints)
+	{
+		var startRoom = rooms.OrderBy(r => r.Center.DistanceTo(pt)).First();
+		if (startRoom.Depth == -1)
 		{
-			Connect(current, neighbor);
+			startRoom.Depth = 0;
+			queue.Enqueue(startRoom);
+		}
+	}
 
+	// 3. Multi-Source BFS traversal
+	while (queue.Count > 0)
+	{
+		var current = queue.Dequeue();
+		foreach (var neighbor in current.Neighbors)
+		{
 			if (neighbor.Depth == -1)
 			{
 				neighbor.Depth = current.Depth + 1;
@@ -169,32 +174,24 @@ public partial class DescentGenerator : Node
 			}
 		}
 	}
-			
-	// A good terminal is a room with only 1 neighbor (a leaf) that isn't an entry point.
-	// If you have few leaves, fallback to rooms with high depth.
-	var potentialTerminals = rooms
-		.Where(r => !entryPoints.Any(e => r.Center.DistanceTo(e) < 5)) // Adjust distance as needed
-		.OrderByDescending(r => r.Depth)
-		.ToList();
-		
 
-	// 2. Select exactly the number of exits available
-	// Shuffle and take exactly the number of entryPoints
-	var selectedTerminals = potentialTerminals
-		.OrderBy(r => rnd.Next())
-		.Take(Math.Max(1, exitCount)) 
-		.ToList();
-	
-	GD.Print($"Assigned {selectedTerminals.Count} terminals for {exitCount} exits.");
+	// 4. Bridge any islands (rooms that were unreachable from entry points)
+	var islands = rooms.Where(r => r.Depth == -1).ToList();
+	var reachable = rooms.Where(r => r.Depth != -1).ToList();
 
-	// 3. Assign terminal status
-	foreach (var room in selectedTerminals)
+	foreach (var island in islands)
 	{
-		room.IsTerminal = true;
-		room.HasLight = true;
+		// Find closest room that is already part of the connected graph
+		var bridge = reachable.OrderBy(r => r.Center.DistanceTo(island.Center)).First();
+		
+		bridge.Neighbors.Add(island);
+		island.Neighbors.Add(bridge);
+		
+		// Update depth for the bridged island
+		island.Depth = bridge.Depth + 1;
+		reachable.Add(island);
 	}
-			
-		}
+}
 
 private List<ChunkExit> GenerateExits(List<Room> rooms, int playableWidth, int playableDepth, int padding, int chunkIndex)
 {
@@ -221,8 +218,8 @@ private List<ChunkExit> GenerateExits(List<Room> rooms, int playableWidth, int p
 		centerRoom.IsTerminal = true;
 		terminals.Add(centerRoom);
 	}
-
-	// 3. Map terminals to their exit points
+//
+	//// 3. Map terminals to their exit points
 	foreach (var room in terminals)
 	{
 		Vector3I exitPoint = new Vector3I(
@@ -242,6 +239,27 @@ private bool IsTooClose(Vector3I candidate, List<Vector3I> existing, int minDist
 		if (candidate.DistanceTo(exit) < minDistance) return true;
 	}
 	return false;
+}
+
+private List<Room> GetUnassignedNeighbors(Room current, List<Room> allRooms, HashSet<Room> assignedRooms)
+{
+	var unassigned = new List<Room>();
+
+	// Assuming your Room object has a 'PotentialNeighbors' list or similar
+	// If you don't have a pre-defined list, we use distance to find 'nearby' rooms
+	foreach (var room in allRooms)
+	{
+		if (assignedRooms.Contains(room)) continue;
+
+		// Logic: Is this room close enough to be considered a 'neighbor'?
+		// You can adjust the distance threshold (e.g., 50.0f) to match your room size
+		if (room.Center.DistanceTo(current.Center) < 50.0f) 
+		{
+			unassigned.Add(room);
+		}
+	}
+
+	return unassigned;
 }
 
 private Vector3I CalculateMajorPathExit(List<Room> rooms, int gridDiv, int cellW, int cellD, int chunkIndex, int padding)
@@ -267,6 +285,15 @@ private Vector3I CalculateMajorPathExit(List<Room> rooms, int gridDiv, int cellW
 
 	// 3. Absolute Fallback: Center of the chunk
 	return new Vector3I(gridDiv / 2 * cellW, 0, gridDiv / 2 * cellD);
+}
+
+public int GetWeightedK(System.Random rnd)
+{
+	int roll = rnd.Next(1, 101); // 1 to 100
+
+	if (roll <= 50) return 1;      // 50% chance
+	if (roll <= 80) return 2;      // 30% chance (51-75)
+	return 3; //20% chance
 }
 	
 }

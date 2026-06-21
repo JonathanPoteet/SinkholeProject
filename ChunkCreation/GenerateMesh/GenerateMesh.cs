@@ -38,7 +38,7 @@ public partial class GenerateMesh : Node
 				MarchCube(st, x, y, z, map, chunkIndex, context.WorldChunks);
 			}
 
-
+//
 			var currentChunk = context.WorldChunks[chunkIndex];
 				var roomsInChunk = currentChunk.Rooms;
 				GD.Print("Is this being hit");

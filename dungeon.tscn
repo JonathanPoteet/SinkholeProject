@@ -4,6 +4,8 @@
 [ext_resource type="Script" uid="uid://b0gd8hrqpvtbb" path="res://Player/player.gd" id="4_4f3i4"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_cfnsl"]
+radius = 0.35
+height = 1.8
 
 [sub_resource type="PhysicalSkyMaterial" id="PhysicalSkyMaterial_qu0b2"]
 rayleigh_color = Color(1.92523e-07, 0.46364456, 0.48785603, 1)
@@ -33,7 +35,7 @@ script = ExtResource("1_qu0b2")
 script = ExtResource("4_4f3i4")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=2136764241]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape3D_cfnsl")
 
 [node name="Camera3D" type="Camera3D" parent="Player" unique_id=1532239070]

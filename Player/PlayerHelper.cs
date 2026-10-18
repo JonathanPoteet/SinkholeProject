@@ -16,23 +16,26 @@ public partial class PlayerHelper : Node
 	
 	float centerX = width * 0.5f;
 	float centerZ = depth * 0.5f;
+	float minSpawnDistanceSquared = 36.0f;
 
 	float bestScore = float.MaxValue;
 	Vector3? bestPos = null;
 
 	// IMPORTANT: stay in safe bounds for y+2 check
 		GD.Print($"Checking mesh y: {globalYOffset}, chunkHeight: {chunkHeight}");
-	for (int y = chunkHeight - 3; y >= 0; y--)
+	for (int y = Math.Min(chunkHeight, map.GetLength(1)) - 4; y >= 0; y--)
 	{
-		for (int x = 2; x < width - 2; x++)
+		for (int x = 4; x < width - 4; x++)
 		{
-			for (int z = 2; z < depth - 2; z++)
+			for (int z = 4; z < depth - 4; z++)
 			{
-				bool floor = map[x, y, z] == 1;
-				bool headroom1 = map[x, y + 1, z] == 0;
-				bool headroom2 = map[x, y + 2, z] == 0;
+				bool floor = HasFloorSupport(map, x, y, z);
+				bool hasPlayerClearance = HasPlayerClearance(map, x, y, z);
+				float shaftDx = x - centerX;
+				float shaftDz = z - centerZ;
+				bool clearOfExitShaft = shaftDx * shaftDx + shaftDz * shaftDz >= minSpawnDistanceSquared;
 
-				if (floor && headroom1 && headroom2)
+				if (floor && hasPlayerClearance && clearOfExitShaft)
 				{
 					float dx = x - centerX;
 					float dz = z - centerZ;
@@ -43,13 +46,14 @@ public partial class PlayerHelper : Node
 						float chunkWorldY = globalYOffset - chunkHeight;
 
 						float worldX = x * voxelSize;
-						float worldY = chunkWorldY + (y + 1.5f) * voxelSize;
+						float worldY = chunkWorldY + (y + 0.75f) * voxelSize;
 						float worldZ = z * voxelSize;
 
 						bestScore = score;
 						bestPos = new Vector3(worldX, worldY, worldZ);
 					}
 				}
+
 			}
 		}
 	}
@@ -63,4 +67,27 @@ public partial class PlayerHelper : Node
 
 	GD.PrintErr("No valid spawn found.");
 }
+
+	private static bool HasPlayerClearance(int[,,] map, int x, int y, int z)
+	{
+		for (int offsetX = -1; offsetX <= 1; offsetX++)
+		for (int offsetZ = -1; offsetZ <= 1; offsetZ++)
+		for (int offsetY = 1; offsetY <= 3; offsetY++)
+		{
+			if (map[x + offsetX, y + offsetY, z + offsetZ] != 0) return false;
+		}
+
+		return true;
+	}
+
+	private static bool HasFloorSupport(int[,,] map, int x, int y, int z)
+	{
+		for (int offsetX = -1; offsetX <= 1; offsetX++)
+		for (int offsetZ = -1; offsetZ <= 1; offsetZ++)
+		{
+			if (map[x + offsetX, y, z + offsetZ] != 1) return false;
+		}
+
+		return true;
+	}
 }

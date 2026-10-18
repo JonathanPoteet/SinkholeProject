@@ -8,118 +8,119 @@ using SinkholeProject.World;
 using SinkholeProject.Helper.Volumes;
 public partial class PathController : Node
 {
+	private const int CorridorRadius = 2;
 		//TODO create a controller
 		// it must take in the biome + start + end vectors
 		// depending on location it must decide how to handle the path. needs to use a bias algo to make these decisions.
 		// biome decides look/feel of the path (grassy, desert, futuristic) + any odd biases (steep drops?)
 	
-		public void CarvePath(Vector3I start, Vector3I end, int[,,] map, 
-		int width, int height, int depth, BiomeType biome, System.Random rnd, Noise noise, List<Bounds> reservedVolumes)
+		public bool CarvePath(Vector3I start, Vector3I end, int[,,] map,
+		int width, int height, int depth, BiomeType biome, System.Random rnd, Noise noise,
+		HashSet<Vector3I> reservedPathVoxels,
+		HashSet<Vector3I> roomVoxels, HashSet<Vector3I> roomClearance)
 	{
-		// 1. Generate path segments (The "Planning Phase")
-		// We store the voxels AND the bounding boxes for the reservation system
-		List<Vector3I> pathVoxels = GenerateRaggedPathVoxels(start, end, noise, 3);
-		List<Bounds> pathSegments = CreatePathSegments(pathVoxels, 30); // 10 = segment length
+		GD.Print($"Carving path from {start} to {end} in biome {biome}");
+		if (!InBounds(start, width, height, depth) || !InBounds(end, width, height, depth)) return false;
 
-		// 2. Validation: Check against Rooms and existing ReservedVolumes
-		
-		//foreach (var segment in pathSegments)
-		//{
-			//// Check collision against other paths
-			//foreach (var reserved in reservedVolumes)
-			//{
-				//if (segment.Intersects(reserved, padding: 2))
-				//{
-					//// Optional: Decide if you want to skip or merge
-					////GD.Print("Path intersecting existing reservation.");
-				//}
-			//}
-		//}
-
-		// 3. Commitment: Carve and Reserve
-		foreach (var v in pathVoxels)
+		var path = FindPath(start, end, width, height, depth, roomVoxels, roomClearance, reservedPathVoxels);
+		if (path == null)
 		{
-			// Ensure bounds before carving
-			if (v.X >= 0 && v.X < width && v.Y >= 0 && v.Y < height && v.Z >= 0 && v.Z < depth)
+			GD.PushWarning($"No unobstructed route found from {start} to {end}.");
+			return false;
+		}
+
+		var carvedVoxels = new HashSet<Vector3I>();
+		foreach (var point in path)
+		{
+			for (int x = -CorridorRadius; x <= CorridorRadius; x++)
+			for (int y = -CorridorRadius; y <= CorridorRadius; y++)
+			for (int z = -CorridorRadius; z <= CorridorRadius; z++)
 			{
-				map[v.X, v.Y, v.Z] = 0; // Set to Air
+				if (x * x + y * y + z * z > CorridorRadius * CorridorRadius) continue;
+				var voxel = point + new Vector3I(x, y, z);
+				if (!IsCarvable(voxel, width, height, depth, start, end)) continue;
+				if (roomVoxels.Contains(voxel) && !IsDoorOpening(voxel, start, end)) continue;
+				map[voxel.X, voxel.Y, voxel.Z] = 0;
+				carvedVoxels.Add(voxel);
 			}
 		}
 
-		// Register all path segments as reserved space in this chunk
-		reservedVolumes.AddRange(pathSegments);
+		foreach (var voxel in carvedVoxels)
+			reservedPathVoxels.Add(voxel);
+		return true;
 	}
-	
-	
-	private List<Bounds> CreatePathSegments(List<Vector3I> voxels, int stepSize)
-{
-	var segments = new List<Bounds>();
-	for (int i = 0; i < voxels.Count; i += stepSize)
+
+	private static readonly Vector3I[] Directions =
 	{
-		int end = Math.Min(i + stepSize, voxels.Count);
-		// Create an AABB for this chunk of the path
-		segments.Add(CalculateBoundsFromVoxels(voxels.GetRange(i, end - i)));
-	}
-	return segments;
-}
+		new(1, 0, 0), new(-1, 0, 0), new(0, 1, 0),
+		new(0, -1, 0), new(0, 0, 1), new(0, 0, -1)
+	};
 
-private Bounds CalculateBoundsFromVoxels(List<Vector3I> voxels)
-{
-	Vector3I min = new Vector3I(int.MaxValue, int.MaxValue, int.MaxValue);
-	Vector3I max = new Vector3I(int.MinValue, int.MinValue, int.MinValue);
-	foreach (var v in voxels)
+	private static List<Vector3I> FindPath(Vector3I start, Vector3I end, int width, int height, int depth,
+		HashSet<Vector3I> roomVoxels, HashSet<Vector3I> roomClearance, HashSet<Vector3I> reservedVoxels)
 	{
-		min = new Vector3I(Math.Min(min.X, v.X), Math.Min(min.Y, v.Y), Math.Min(min.Z, v.Z));
-		max = new Vector3I(Math.Max(max.X, v.X), Math.Max(max.Y, v.Y), Math.Max(max.Z, v.Z));
-	}
-	return new Bounds(min, max);
-}
-	private List<Vector3I> GenerateRaggedPathVoxels(Vector3I start, Vector3I end, Noise noise, int radius) 
-{
-	List<Vector3I> pathVoxels = new List<Vector3I>();
-	
-	Vector3 current = new Vector3(start.X, start.Y, start.Z);
-	Vector3 target = new Vector3(end.X, end.Y, end.Z);
-	
-	// Track the last point to avoid adding redundant voxels for the same area
-	Vector3I lastAdded = new Vector3I(-999, -999, -999);
+		var frontier = new PriorityQueue<Vector3I, int>();
+		var previous = new Dictionary<Vector3I, Vector3I>();
+		var costs = new Dictionary<Vector3I, int> { [start] = 0 };
+		frontier.Enqueue(start, ManhattanDistance(start, end));
 
-	while (current.DistanceTo(target) > 1.0f)
-	{
-		Vector3 direction = (target - current).Normalized();
-		
-		// Organic wobble
-		float nX = noise.GetNoise3D(current.X * 0.1f, current.Y * 0.1f, current.Z * 0.1f);
-		float nY = noise.GetNoise3D(current.X * 0.1f + 50f, current.Y * 0.1f, current.Z * 0.1f);
-		float nZ = noise.GetNoise3D(current.X * 0.1f + 100f, current.Y * 0.1f, current.Z * 0.1f);
-		
-		Vector3 wander = new Vector3(nX, nY, nZ) * 0.8f;
-		current += (direction + wander) * 0.5f;
-
-		// Convert to Voxel Space
-		Vector3I currentVoxel = new Vector3I((int)current.X, (int)current.Y, (int)current.Z);
-
-		// Only add voxels if we have moved to a new integer position
-		if (currentVoxel != lastAdded)
+		while (frontier.TryDequeue(out var current, out int queuedPriority))
 		{
-			AddRadiusVoxels(current, radius, pathVoxels);
-			lastAdded = currentVoxel;
+			if (queuedPriority != costs[current] + ManhattanDistance(current, end)) continue;
+			if (current == end) break;
+
+			foreach (var direction in Directions)
+			{
+				var next = current + direction;
+				if (!IsCarvable(next, width, height, depth, start, end)
+					|| IsBlocked(next, start, end, roomVoxels, roomClearance)) continue;
+
+				int nextCost = costs[current] + 1 + (reservedVoxels.Contains(next) ? 20 : 0);
+				if (costs.TryGetValue(next, out int knownCost) && knownCost <= nextCost) continue;
+				costs[next] = nextCost;
+				previous[next] = current;
+				frontier.Enqueue(next, nextCost + ManhattanDistance(next, end));
+			}
 		}
+
+		if (start != end && !previous.ContainsKey(end)) return null;
+		var path = new List<Vector3I> { end };
+		while (path[^1] != start) path.Add(previous[path[^1]]);
+		path.Reverse();
+		return path;
 	}
-	
-	return pathVoxels;
-}
-	
 
+	private static bool IsBlocked(Vector3I point, Vector3I start, Vector3I end,
+		HashSet<Vector3I> roomVoxels, HashSet<Vector3I> roomClearance)
+	{
+		return roomClearance.Contains(point) && !IsDoorOpening(point, start, end)
+			|| roomVoxels.Contains(point) && !IsDoorOpening(point, start, end);
+	}
 
-		private static void AddRadiusVoxels(Vector3 pos, int radius, List<Vector3I> voxels)
-		{
-			int r = radius;
-			for (int x = -r; x <= r; x++)
-				for (int y = -r; y <= r; y++)
-					for (int z = -r; z <= r; z++)
-						if (x * x + y * y + z * z <= r * r)
-							voxels.Add(new Vector3I((int)pos.X + x, (int)pos.Y + y, (int)pos.Z + z));
-		}
+	private static bool IsDoorOpening(Vector3I point, Vector3I start, Vector3I end)
+		=> point.DistanceSquaredTo(start) <= CorridorRadius * CorridorRadius
+			|| point.DistanceSquaredTo(end) <= CorridorRadius * CorridorRadius;
+
+	private static int ManhattanDistance(Vector3I a, Vector3I b)
+		=> Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) + Math.Abs(a.Z - b.Z);
+
+	private static bool InBounds(Vector3I point, int width, int height, int depth)
+		=> point.X >= 0 && point.X < width && point.Y >= 0 && point.Y < height && point.Z >= 0 && point.Z < depth;
+
+	private static bool IsCarvable(Vector3I point, int width, int height, int depth, Vector3I start, Vector3I end)
+	{
+		if (point.Y < 0 || point.Y >= height) return false;
+
+		bool insideSideMargins = point.X >= CorridorRadius + 1 && point.X < width - CorridorRadius - 1
+			&& point.Z >= CorridorRadius + 1 && point.Z < depth - CorridorRadius - 1;
+		if (!insideSideMargins) return false;
+
+		if (point.Y >= 1 && point.Y < height - 1) return true;
+		bool startPortal = (start.Y == 0 || start.Y == height - 1)
+			&& point.DistanceSquaredTo(start) <= CorridorRadius * CorridorRadius;
+		bool endPortal = (end.Y == 0 || end.Y == height - 1)
+			&& point.DistanceSquaredTo(end) <= CorridorRadius * CorridorRadius;
+		return startPortal || endPortal;
+	}
 	
 }

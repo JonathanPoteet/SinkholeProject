@@ -13,7 +13,7 @@ using SinkholeProject.PathController;
 using SinkholeProject.Configuration;
 public partial class DescentGenerator : Node
 {
-	
+	private const int CorridorRadius = 2;
 
 	public void CarveSeededVerticalPath(int chunkIndex, WorldContext context)
 	{	RoomController rc = new RoomController();
@@ -32,7 +32,7 @@ public partial class DescentGenerator : Node
 		int playableDepth = depth - (padding * 2);
 		
 		// 2. Divide the playable space
-		int gridDiv = 5;
+		int gridDiv = 7;
 		ChunkSettings settings = new ChunkSettings(playableWidth, playableHeight, playableDepth, gridDiv, padding);
 
 		// 1. DETERMINE ENTRY POINTS
@@ -51,9 +51,15 @@ public partial class DescentGenerator : Node
 		}
 		GD.Print($"Building entryPoints for Chunk: {chunkIndex}, Exits in prev chunk: {(chunkIndex > 0 ? context.WorldChunks[chunkIndex - 1].ExitPoints.Count : "N/A")}");
 			int exitCount = (chunkIndex == 0) ? 1 : context.Rnd.Next(1, 4);
+			var roomVoxels = new HashSet<Vector3I>();
+			var roomClearance = new HashSet<Vector3I>();
+			var reservedPathVoxels = new HashSet<Vector3I>();
 			
 			if (chunkIndex > 0) {
 				rc.GenerateRooms(allRooms, currentChunk.Biome, chunkIndex, context.Rnd, currentChunk.ReservedVolumes, map, settings);
+					roomVoxels = BuildRoomVoxelSet(allRooms);
+					roomClearance = BuildRoomClearanceSet(roomVoxels, width, height, depth);
+					foreach (var room in allRooms) AssignDoors(room, roomVoxels, width, depth);
 				BuildDungeonGraph(allRooms, entryPoints, context.Rnd, exitCount);
 			} 
 			
@@ -70,34 +76,49 @@ public partial class DescentGenerator : Node
 					{
 						foreach (var exit in currentChunk.ExitPoints)
 						{
-							pc.CarvePath(entry, exit.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+							GD.Print($"Carving path from Entry: {entry} to Exit: {exit.Position}");
+							pc.CarvePath(entry, exit.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, reservedPathVoxels, roomVoxels, roomClearance);
 						}
 					}
 				} else {
 				
 
 				foreach (var entry in entryPoints) {
-					var startRoom = allRooms.OrderBy(r => r.Center.DistanceTo(entry)).First();
+					var startRoom = allRooms.OrderBy(r => r.Center.DistanceTo(entry)).FirstOrDefault();
 					if (startRoom != null) 
 					{
-					pc.CarvePath(entry, startRoom.Center, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+					foreach (var door in startRoom.DoorCandidates.OrderBy(point => point.DistanceTo(entry)).ToList())
+					{
+						if (!pc.CarvePath(entry, door, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, reservedPathVoxels, roomVoxels, roomClearance)) continue;
+						startRoom.DoorCandidates.Remove(door);
+						break;
+					}
 					}
 				}
 				
+				var processedConnections = new HashSet<(int, int)>();
 				foreach (var room in allRooms)
 				foreach (var neighbor in room.Neighbors)
 				{
-					if (allRooms.IndexOf(neighbor) > allRooms.IndexOf(room))
+					int roomIndex = allRooms.IndexOf(room);
+					int neighborIndex = allRooms.IndexOf(neighbor);
+					var connectionKey = (Math.Min(roomIndex, neighborIndex), Math.Max(roomIndex, neighborIndex));
+					if (processedConnections.Add(connectionKey))
 					{
-						Vector3I startPoint = rc.GetRoomConnectionPoint(room, room.Center);
-						Vector3I endPoint = rc.GetRoomConnectionPoint(neighbor, neighbor.Center);
-						pc.CarvePath(startPoint, endPoint, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+						if (TryConnectRooms(room, neighbor, pc, currentChunk.MapData,
+							width, height, depth, currentChunk.Biome, context, reservedPathVoxels, roomVoxels, roomClearance))
+						{
+							continue;
+						}
+						else
+							GD.PushWarning($"No clear door pair between rooms at {room.Center} and {neighbor.Center} — connection skipped.");
 					}
 				}
 		
 				foreach (var connection in currentChunk.ExitPoints) {
-				Vector3I closestRoom = rc.GetRoomConnectionPoint(connection.ParentRoom, connection.Position);
-				pc.CarvePath(closestRoom, connection.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, currentChunk.ReservedVolumes);
+				Vector3I closestRoom = connection.ParentRoom.DoorCandidates
+					.OrderBy(point => point.DistanceTo(connection.Position)).FirstOrDefault();
+				pc.CarvePath(closestRoom, connection.Position, currentChunk.MapData, width, height, depth, currentChunk.Biome, context.Rnd, context.Noise, reservedPathVoxels, roomVoxels, roomClearance);
 				}	
 			}
 			
@@ -110,38 +131,35 @@ public partial class DescentGenerator : Node
 		
 public void BuildDungeonGraph(List<Room> rooms, List<Vector3I> entryPoints, System.Random rnd, int exitCount)
 {
-	// 1. Reset
-	foreach (var r in rooms) { r.Neighbors.Clear(); r.Depth = 0; r.IsTerminal = false; }
+	foreach (var room in rooms) { room.Neighbors.Clear(); room.Depth = -1; room.IsTerminal = false; }
+	if (rooms.Count == 0) return;
 
-	foreach (var room in rooms)
+	var connected = new HashSet<Room>();
+	var root = entryPoints.Count > 0
+		? rooms.OrderBy(room => room.Center.DistanceTo(entryPoints[0])).First()
+		: rooms[0];
+	connected.Add(root);
+	root.Depth = 0;
+
+	while (connected.Count < rooms.Count)
 	{
-		int k = GetWeightedK(rnd);
-		var neighbors = rooms
-			.Where(r => r != room)
-			.OrderBy(r => r.Center.DistanceTo(room.Center))
-			.Take(k);
-
-		foreach (var neighbor in neighbors)
+		var best = (From: (Room)null, To: (Room)null, Distance: float.MaxValue);
+		foreach (var from in connected)
+		foreach (var to in rooms)
 		{
-			if (!room.Neighbors.Contains(neighbor))
-			{
-				room.Neighbors.Add(neighbor);
-				neighbor.Neighbors.Add(room); // Ensure bidirectional
-			}
+			if (connected.Contains(to)) continue;
+			float distance = from.Center.DistanceTo(to.Center);
+			if (distance < best.Distance) best = (from, to, distance);
 		}
-	}
-	
-	EnsureFullConnectivity(rooms, entryPoints);
-	
-	
-	// 4. Select exits that are the absolute furthest
-	// We order by Depth descending, so the largest depth numbers come first.
-	var selected = rooms
-		.OrderByDescending(r => r.Depth)
-		.Take(exitCount)
-		.ToList();
 
-	foreach (var t in selected) { t.IsTerminal = true; t.HasLight = true; }
+		best.From.Neighbors.Add(best.To);
+		best.To.Neighbors.Add(best.From);
+		best.To.Depth = best.From.Depth + 1;
+		connected.Add(best.To);
+	}
+
+	var selected = rooms.OrderByDescending(room => room.Depth).Take(exitCount).ToList();
+	foreach (var terminal in selected) { terminal.IsTerminal = true; terminal.HasLight = true; }
 }
 
 private void EnsureFullConnectivity(List<Room> rooms, List<Vector3I> entryPoints)
@@ -294,6 +312,107 @@ public int GetWeightedK(System.Random rnd)
 	if (roll <= 50) return 1;      // 50% chance
 	if (roll <= 80) return 2;      // 30% chance (51-75)
 	return 3; //20% chance
+}
+
+private void AssignDoors(Room room, HashSet<Vector3I> roomVoxels, int width, int depth)
+{
+	room.DoorCandidates.Clear();
+	foreach (var point in room.ConnectionPoints)
+	{
+		bool hasInteriorAboveAndBelow = roomVoxels.Contains(point + Vector3I.Up)
+			&& roomVoxels.Contains(point + Vector3I.Down);
+		bool xSideWall = !roomVoxels.Contains(point + Vector3I.Right)
+			|| !roomVoxels.Contains(point + Vector3I.Left);
+		bool zSideWall = !roomVoxels.Contains(point + Vector3I.Back)
+			|| !roomVoxels.Contains(point + Vector3I.Forward);
+		bool spacedDoorway = xSideWall && point.Z % 3 == 0 || zSideWall && point.X % 3 == 0;
+		bool awayFromChunkEdge = point.X >= CorridorRadius + 2
+			&& point.X < width - CorridorRadius - 2
+			&& point.Z >= CorridorRadius + 2
+			&& point.Z < depth - CorridorRadius - 2;
+		if (hasInteriorAboveAndBelow && spacedDoorway && awayFromChunkEdge)
+			room.DoorCandidates.Add(point);
+	}
+}
+
+private HashSet<Vector3I> BuildRoomClearanceSet(HashSet<Vector3I> roomVoxels, int width, int height, int depth)
+{
+	var clearance = new HashSet<Vector3I>();
+	foreach (var voxel in roomVoxels)
+	for (int x = -CorridorRadius; x <= CorridorRadius; x++)
+	for (int y = -CorridorRadius; y <= CorridorRadius; y++)
+	for (int z = -CorridorRadius; z <= CorridorRadius; z++)
+	{
+		if (x * x + y * y + z * z > CorridorRadius * CorridorRadius) continue;
+		var expanded = voxel + new Vector3I(x, y, z);
+		if (expanded.X >= 0 && expanded.X < width && expanded.Y >= 0 && expanded.Y < height && expanded.Z >= 0 && expanded.Z < depth)
+			clearance.Add(expanded);
+	}
+	return clearance;
+}
+
+private HashSet<Vector3I> BuildRoomVoxelSet(List<Room> rooms)
+{
+	var voxels = new HashSet<Vector3I>();
+	foreach (var room in rooms)
+	foreach (var cell in room.Cells)
+	{
+		var bounds = room.GetBoundsForCell(cell);
+		for (int x = bounds.Min.X; x < bounds.Max.X; x++)
+		for (int y = bounds.Min.Y; y < bounds.Max.Y; y++)
+		for (int z = bounds.Min.Z; z < bounds.Max.Z; z++)
+			voxels.Add(new Vector3I(x, y, z));
+	}
+	return voxels;
+}
+
+private bool TryPickDoors(Room a, Room b, List<Room> allRooms, out Vector3I doorA, out Vector3I doorB)
+{
+	doorA = default; doorB = default;
+	var pairs = new List<(Vector3I da, Vector3I db, float d)>();
+	foreach (var da in a.DoorCandidates)
+		foreach (var db in b.DoorCandidates)
+			pairs.Add((da, db, da.DistanceTo(db)));
+
+	foreach (var (da, db, _) in pairs.OrderBy(p => p.d))
+	{
+		doorA = da; doorB = db;
+		return true;
+	}
+	return false;
+}
+
+private bool TryConnectRooms(Room a, Room b, PathController pathController, int[,,] map,
+	int width, int height, int depth, BiomeType biome, WorldContext context,
+	HashSet<Vector3I> reservedPathVoxels, HashSet<Vector3I> roomVoxels, HashSet<Vector3I> roomClearance)
+{
+	const int candidateLimit = 8;
+	var candidates = new PriorityQueue<(Vector3I DoorA, Vector3I DoorB), float>();
+	foreach (var doorA in a.DoorCandidates)
+	foreach (var doorB in b.DoorCandidates)
+	{
+		float distance = doorA.DistanceSquaredTo(doorB);
+		if (candidates.Count == candidateLimit)
+		{
+			candidates.TryPeek(out _, out float worstPriority);
+			if (-distance <= worstPriority) continue;
+			candidates.Dequeue();
+		}
+		candidates.Enqueue((doorA, doorB), -distance);
+	}
+
+	var orderedCandidates = new List<(Vector3I DoorA, Vector3I DoorB)>();
+	while (candidates.TryDequeue(out var pair, out _)) orderedCandidates.Add(pair);
+	orderedCandidates.Reverse();
+	foreach (var (doorA, doorB) in orderedCandidates)
+	{
+		if (!pathController.CarvePath(doorA, doorB, map, width, height, depth, biome,
+			context.Rnd, context.Noise, reservedPathVoxels, roomVoxels, roomClearance)) continue;
+		a.DoorCandidates.Remove(doorA);
+		b.DoorCandidates.Remove(doorB);
+		return true;
+	}
+	return false;
 }
 	
 }

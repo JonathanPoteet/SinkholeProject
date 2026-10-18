@@ -44,7 +44,6 @@ func _physics_process(delta: float) -> void:
 	
 	# Handle jump.
 	if Input.is_action_just_pressed("player_jump"):
-	#if Input.is_action_just_pressed("player_jump") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
 
 	# --- Movement ---
@@ -56,14 +55,14 @@ func _physics_process(delta: float) -> void:
 	# The input_dir.y is forward/back movement (mapped to Z in world space)
 	var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
-	if direction:
+	if direction.length_squared() > 0.0:
 		# Move at full speed in the calculated direction
 		velocity.x = direction.x * SPEED
 		velocity.z = direction.z * SPEED
 	else:
 		# Decelerate when no movement input is given
-		velocity.x = move_toward(velocity.x, 0, SPEED)
-		velocity.z = move_toward(velocity.z, 0, SPEED)
+		velocity.x = move_toward(velocity.x, 0, SPEED * delta)
+		velocity.z = move_toward(velocity.z, 0, SPEED * delta)
 
 	# Move the character and handle collision
 	move_and_slide()

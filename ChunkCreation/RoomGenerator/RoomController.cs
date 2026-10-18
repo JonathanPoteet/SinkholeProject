@@ -16,9 +16,9 @@ public partial class RoomController : Node
 	public void GenerateRooms(List<Room> rooms, BiomeType biome, int chunkIndex, System.Random rnd, List<Bounds> reservedVolumes, int[,,] map, ChunkSettings settings)
 {
 	var candidates = new Dictionary<Vector3I, Candidate>();
-	for (int x = 0; x < settings.GridDiv; x++)
-	for (int y = 0; y < settings.GridDiv; y++)
-	for (int z = 0; z < settings.GridDiv; z++)
+	for (int x = 1; x < settings.GridDiv - 1; x++)
+	for (int y = 1; y < settings.GridDiv - 1; y++)
+	for (int z = 1; z < settings.GridDiv - 1; z++)
 	{
 		if (rnd.NextDouble() < 0.2) 
 		{
@@ -50,7 +50,7 @@ public partial class RoomController : Node
 			new Vector3I(0, 0, 1), new Vector3I(0, 0, -1)
 		};
 
-		while(queue.Count > 0)
+		while(queue.Count > 0 && newRoom.Cells.Count < 2)
 		{
 			var current = queue.Dequeue();
 			
@@ -86,9 +86,9 @@ public partial class RoomController : Node
 	
 	//finally carve the rooms
 	GD.Print($"Rooms generated: {rooms.Count}");
-	foreach (var room in rooms) {
-		CarveRoom(room, map, biome);
-	}
+	var roomVoxels = BuildRoomVoxelSet(rooms);
+	foreach (var room in rooms)
+		CarveRoom(room, map, biome, roomVoxels);
 	
 	
 	
@@ -166,38 +166,31 @@ private Vector3I GetCellCenter(int x, int y, int z, int cellW, int cellH, int ce
 		return nearest;
 	}
 	
-	private void CarveRoom(Room room, int[,,] map,
-		BiomeType biome)
+	private void CarveRoom(Room room, int[,,] map, BiomeType biome, HashSet<Vector3I> roomVoxels)
 	{
 		switch (biome)
 		{
 			case BiomeType.Cave:
 			case BiomeType.Cavern:
 			default:
-				CarveCavernRoom(room, map);
+				CarveCavernRoom(room, map, roomVoxels);
 				break;
 		}
 	}
 
-		private void CarveCavernRoom(Room room, int[,,] map)
+		private void CarveCavernRoom(Room room, int[,,] map, HashSet<Vector3I> roomVoxels)
 		{
-			// 1. Create a set of all voxels that belong to this room
-			// This allows O(1) lookup time to see if a neighbor is "inside" the room
-			var roomVoxels = new HashSet<Vector3I>();
-
-			foreach (Vector3I cellPos in room.Cells)
+			var roomSpecificVoxels = new HashSet<Vector3I>();
+			foreach (var cell in room.Cells)
 			{
-				Bounds b = room.GetBoundsForCell(cellPos);
-				for (int x = b.Min.X; x < b.Max.X; x++)
-				for (int y = b.Min.Y; y < b.Max.Y; y++)
-				for (int z = b.Min.Z; z < b.Max.Z; z++)
-				{
-					roomVoxels.Add(new Vector3I(x, y, z));
-				}
+				var bounds = room.GetBoundsForCell(cell);
+				for (int x = bounds.Min.X; x < bounds.Max.X; x++)
+				for (int y = bounds.Min.Y; y < bounds.Max.Y; y++)
+				for (int z = bounds.Min.Z; z < bounds.Max.Z; z++)
+					roomSpecificVoxels.Add(new Vector3I(x, y, z));
 			}
 
-			// 2. Iterate through every voxel we identified as part of the room
-			foreach (var voxel in roomVoxels)
+			foreach (var voxel in roomSpecificVoxels)
 			{
 				// 3. Check 6-way neighbors
 				bool isEdge = false;
@@ -210,7 +203,7 @@ private Vector3I GetCellCenter(int x, int y, int z, int cellW, int cellH, int ce
 				foreach (var dir in directions)
 				{
 					// If a neighbor is NOT in our set, then this voxel is on the boundary
-					if (!roomVoxels.Contains(voxel + dir))
+					if (!roomSpecificVoxels.Contains(voxel + dir))
 					{
 						isEdge = true;
 						break;
@@ -229,6 +222,21 @@ private Vector3I GetCellCenter(int x, int y, int z, int cellW, int cellH, int ce
 					map[voxel.X, voxel.Y, voxel.Z] = 0; // Air
 				}
 			}
+		}
+
+		private HashSet<Vector3I> BuildRoomVoxelSet(List<Room> rooms)
+		{
+			var voxels = new HashSet<Vector3I>();
+			foreach (var room in rooms)
+			foreach (var cell in room.Cells)
+			{
+				var bounds = room.GetBoundsForCell(cell);
+				for (int x = bounds.Min.X; x < bounds.Max.X; x++)
+				for (int y = bounds.Min.Y; y < bounds.Max.Y; y++)
+				for (int z = bounds.Min.Z; z < bounds.Max.Z; z++)
+					voxels.Add(new Vector3I(x, y, z));
+			}
+			return voxels;
 		}
 
 }

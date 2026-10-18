@@ -31,48 +31,21 @@ public partial class GenerateMesh : Node
 	int yStart = 0;
 	int yEnd = context.WorldChunks[chunkIndex].height;
 	int[,,] map = context.WorldChunks[chunkIndex].MapData;
+	int emittedVertexCount = 0;
 	for (int y = yStart; y < yEnd; y++)
 		for (int x = 0; x < context.WorldChunks[chunkIndex].width - 1; x++)
 			for (int z = 0; z < context.WorldChunks[chunkIndex].depth - 1; z++)
 			{	
-				MarchCube(st, x, y, z, map, chunkIndex, context.WorldChunks);
+				MarchCube(st, x, y, z, map, chunkIndex, context.WorldChunks, ref emittedVertexCount);
 			}
 
 //
 			var currentChunk = context.WorldChunks[chunkIndex];
-				var roomsInChunk = currentChunk.Rooms;
-				GD.Print("Is this being hit");
-				GD.Print($"Rooms in chunk: {roomsInChunk.Count}");
-				foreach (var room in roomsInChunk)
-			{
-				
-				GD.Print($"Room has a Light: {room.HasLight}");
-				if (room.HasLight)
-				{
-					var orb = new MeshInstance3D();
-					orb.Mesh = new SphereMesh { Radius = 0.5f, Height = 1.0f };
-					orb.Position = new Vector3(room.Center.X, room.Center.Y, room.Center.Z);
-					
-					// 2. Give the orb a glowing material
-					var material = new StandardMaterial3D();
-					material.EmissionEnabled = true;
-					material.Emission = new Color(0.9f, 0.8f, 0.5f);
-					material.EmissionEnergyMultiplier = 5.0f; // Makes it glow bright
-					orb.MaterialOverride = material;
-					
-					// 3. Attach the light to the orb
-					var light = new OmniLight3D();
-					light.LightColor = new Color(0.9f, 0.8f, 0.5f);
-					light.LightEnergy = 2.0f;
-					light.OmniRange = 20.0f;
-					
-					// Parent light to orb so they move as one unit
-					orb.AddChild(light);
-					
-					// Add the whole "Orb assembly" to the chunk mesh
-					newChunkMesh.AddChild(orb);
-				}	
-			}
+			foreach (var room in currentChunk.Rooms)
+				AddRoomLight(newChunkMesh, room.Center);
+
+			foreach (var exit in currentChunk.ExitPoints)
+				AddConnectorOrb(newChunkMesh, exit.Position);
 
 
 	st.GenerateNormals();
@@ -90,15 +63,53 @@ public partial class GenerateMesh : Node
 	);
 
 	mat.Uv1Triplanar = true;
+	mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
 
 	newChunkMesh.Mesh = mesh;
 	newChunkMesh.MaterialOverride = mat;
 	newChunkMesh.GlobalPosition = new Vector3(0, context.WorldChunks[chunkIndex].GlobalYOffset - context.WorldChunks[chunkIndex].height, 0);
 	newChunkMesh.CreateTrimeshCollision();
-	GD.Print($"Chunk {chunkIndex}, Generated at {newChunkMesh.GlobalPosition}");
+	GD.Print($"Chunk {chunkIndex}, Mesh vertices: {emittedVertexCount}, Generated at {newChunkMesh.GlobalPosition}");
 }
 
-	private void MarchCube(SurfaceTool st, int x, int y, int z, int[,,] map, int chunkIndex, Dictionary<int, Chunk> worldChunks)
+	private static void AddRoomLight(Node3D parent, Vector3I position)
+	{
+		var light = new OmniLight3D
+		{
+			Position = new Vector3(position.X, position.Y, position.Z),
+			LightColor = new Color(0.82f, 0.76f, 0.62f),
+			LightEnergy = 0.35f,
+			OmniRange = 8.0f
+		};
+		parent.AddChild(light);
+	}
+
+	private static void AddConnectorOrb(Node3D parent, Vector3I position)
+	{
+		var orb = new MeshInstance3D
+		{
+			Mesh = new SphereMesh { Radius = 0.3f, Height = 0.6f },
+			Position = new Vector3(position.X, position.Y, position.Z)
+		};
+		var material = new StandardMaterial3D
+		{
+			EmissionEnabled = true,
+			Emission = new Color(0.9f, 0.8f, 0.5f),
+			EmissionEnergyMultiplier = 1.5f
+		};
+		orb.MaterialOverride = material;
+
+		var light = new OmniLight3D
+		{
+			LightColor = new Color(0.9f, 0.8f, 0.5f),
+			LightEnergy = 0.8f,
+			OmniRange = 10.0f
+		};
+		orb.AddChild(light);
+		parent.AddChild(orb);
+	}
+
+	private void MarchCube(SurfaceTool st, int x, int y, int z, int[,,] map, int chunkIndex, Dictionary<int, Chunk> worldChunks, ref int emittedVertexCount)
 	{
 		float[] cubeValues = new float[8];
 		int cubeIndex = 0;
@@ -121,6 +132,7 @@ public partial class GenerateMesh : Node
 			st.AddVertex(InterpEdge(MarchingCubesData.TriTable[cubeIndex, i + 2], x, y, z, cubeValues));
 			st.AddVertex(InterpEdge(MarchingCubesData.TriTable[cubeIndex, i + 1], x, y, z, cubeValues));
 			st.AddVertex(InterpEdge(MarchingCubesData.TriTable[cubeIndex, i], x, y, z, cubeValues));
+			emittedVertexCount += 3;
 		}
 	}
 

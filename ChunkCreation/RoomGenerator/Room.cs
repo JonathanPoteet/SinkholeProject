@@ -18,7 +18,7 @@ namespace SinkholeProject.Rooms
 		public int Depth { get; set; }
 		private List<Bounds> _cachedBounds = new List<Bounds>();
 		public List<Vector3I> ConnectionPoints { get; set; } = new List<Vector3I>();
-		
+		public List<Vector3I> DoorCandidates = new();
 		private Vector3I? _cachedCenter;
 
 		// Call this once after your RoomGenerator finishes adding all cells
